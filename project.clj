@@ -1,4 +1,4 @@
-(defproject com.github.hden/aws-xray-sdk-clj "0.2.0-SNAPSHOT"
+(defproject com.github.hden/aws-xray-sdk-clj "0.3.0-SNAPSHOT"
   :description "A light wrapper for aws-xray-sdk-java"
   :url "https://github.com/hden/aws-xray-sdk-clj"
   :license {:name "Apache License, Version 2.0"
