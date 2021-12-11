@@ -1,6 +1,7 @@
 version: 2
 jobs:
   build:
+    resource_class: medium
     working_directory: ~/workspace
     docker:
       - image: circleci/clojure:lein-2.8.1
