@@ -1,6 +1,5 @@
-# aws-xray-sdk-clj
-[![Clojars Project](https://img.shields.io/clojars/v/com.github.hden/aws-xray-sdk-clj.svg)](https://clojars.org/com.github.hden/aws-xray-sdk-clj)
-
+# aws-xray-sdk-clj [![CircleCI](https://circleci.com/gh/hden/aws-xray-sdk-clj/tree/main.svg?style=svg)](https://circleci.com/gh/hden/aws-xray-sdk-clj/tree/main)
+ [![codecov](https://codecov.io/gh/hden/aws-xray-sdk-clj/branch/main/graph/badge.svg?token=YHH1W6IGIW)](https://codecov.io/gh/hden/aws-xray-sdk-clj) [![Clojars Project](https://img.shields.io/clojars/v/com.github.hden/aws-xray-sdk-clj.svg)](https://clojars.org/com.github.hden/aws-xray-sdk-clj)
 
 A light wrapper for aws-xray-sdk-java.
 
