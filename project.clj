@@ -8,6 +8,7 @@
                  [camel-snake-kebab "0.4.2"]
                  [com.amazonaws/aws-xray-recorder-sdk-core "2.10.0"]
                  [funcool/promesa "6.0.2"]]
+  :plugins [[lein-cloverage "1.1.2"]]
   :repl-options {:init-ns aws-xray-sdk-clj.core}
   :profiles
   {:dev {:dependencies [[cuid "0.1.2"]

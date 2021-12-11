@@ -1,4 +1,6 @@
 # aws-xray-sdk-clj
+[![Clojars Project](https://img.shields.io/clojars/v/com.github.hden/aws-xray-sdk-clj.svg)](https://clojars.org/com.github.hden/aws-xray-sdk-clj)
+
 
 A light wrapper for aws-xray-sdk-java.
 
