@@ -1,45 +1,16 @@
 (ns aws-xray-sdk-clj.promise-test
   (:require [aws-xray-sdk-clj.core :as core]
             [aws-xray-sdk-clj.promise :refer [with-segment]]
+            [aws-xray-sdk-clj.test-util :as util]
             [clojure.test :refer [deftest is use-fixtures]]
             [cuid.core :refer [cuid]]
             [promesa.core :as promesa]
-            [promesa.exec :as exec])
-  (:import [com.amazonaws.xray.emitters Emitter]
-           [com.amazonaws.xray.entities Entity TraceID]))
+            [promesa.exec :as exec]))
 
 (def segments (atom []))
 (def entity (atom {}))
 
-(def mock-emitter
-  (proxy [Emitter][]
-    (sendSegment [x]
-      (swap! segments conj x)
-      true)
-
-    (sendSubsegment [x]
-      (swap! segments conj x)
-      true)))
-
-(def mock-entity
-  (reify Entity
-    (addException [_ ex]
-      (swap! entity assoc :exception ex))
-
-    (setError [_ x]
-      (swap! entity assoc :error x))
-
-    (^void putAnnotation [_ ^String k ^String v]
-      (swap! entity assoc k v))
-
-    (^void putAnnotation [_ ^String k ^Number v]
-      (swap! entity assoc k v))
-
-    (^void putAnnotation [_ ^String k ^Boolean v]
-      (swap! entity assoc k v))
-
-    (putMetadata [_ k v]
-      (swap! entity assoc k v))))
+(def mock-emitter (util/mock-emitter segments))
 
 (defn reset-fixtures! [f]
   (reset! segments [])
@@ -50,48 +21,37 @@
 
 (def recorder (core/recorder {:emitter mock-emitter}))
 
-(defn trace-id []
-  (.toString (TraceID/create recorder)))
-
-(defn annotations [x]
-  (into {} (.getAnnotations x)))
-
-(defn subsegments [segment]
-  (into [] (.getSubsegments segment)))
-
 (deftest async-segment-test
-  (let [data {"foo" "bar"}
-        p (with-segment [segment (core/begin! recorder {:trace-id (trace-id)
+  (let [p (with-segment [segment (core/begin! recorder {:trace-id (util/trace-id recorder)
                                                         :name     "foo"})]
             (-> (promesa/delay 10 "foobar")
               (promesa/finally (fn [_ _]
-                                 (core/set-annotation! segment data))
+                                 (core/set-annotation! segment {"foo" "bar"}))
                                exec/default-executor)))]
     (is (= "foobar" @p))
     (let [segment (first @segments)]
-      (is (= "foo" (.getName segment)))
-      (is (= 0 (count (subsegments segment))))
-      (is (= data (annotations segment))))))
+      (is (= "foo" (:name segment)))
+      (is (nil? (seq (:subsegments segment))))
+      (is (= "bar" (get-in segment [:annotations :foo]))))))
 
 (deftest async-subsegment-test
-  (let [data {"foo" "bar"}
-        p (with-segment [segment (core/begin! recorder {:trace-id (trace-id)
+  (let [p (with-segment [segment (core/begin! recorder {:trace-id (util/trace-id recorder)
                                                         :name     "bar"})]
             (-> (promesa/delay 10 "foobar")
               (promesa/then (fn [_]
                               (with-segment [subsegment (core/begin! segment {:name "baz"})]
                                 (-> (promesa/delay 10 "baz")
                                   (promesa/finally (fn [_ _]
-                                                     (core/set-annotation! subsegment data))
+                                                     (core/set-annotation! subsegment {"foo" "bar"}))
                                                    exec/default-executor))))
                             exec/default-executor)))]
     (is (= "baz" @p))
     (let [segment (first @segments)
-          subsegments (subsegments segment)
+          subsegments (:subsegments segment)
           subsegment (first subsegments)]
-      (is (= "bar" (.getName segment)))
+      (is (= "bar" (:name segment)))
       (is (= 1 (count subsegments)))
-      (is (= data (annotations subsegment))))))
+      (is (= "bar" (get-in subsegment [:annotations :foo]))))))
 
 (defn random-subsegments [segment n]
   (map (fn [_]
@@ -107,12 +67,10 @@
                          exec/default-executor)))
        (range n)))
 
+;; Ensure we don't stumble on a deadlock due to synchronized blocks.
+;; https://github.com/aws/aws-xray-sdk-java/issues/303
 (deftest random-subsegment-test
-  @(with-segment [segment (core/begin! recorder {:trace-id (trace-id)
+  @(with-segment [segment (core/begin! recorder {:trace-id (util/trace-id recorder)
                                                  :name     "baz"})]
-     (promesa/all (random-subsegments segment 6)))
-  (is (= 1 (count @segments)))
-  (let [segment (first @segments)
-        subsegments (subsegments segment)]
-    (is (= "baz" (.getName segment)))
-    (is (< 1 (count subsegments)))))
+     (promesa/all (random-subsegments segment 20)))
+  (is (<= 1 (count @segments))))

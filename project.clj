@@ -10,4 +10,5 @@
                  [funcool/promesa "6.0.2"]]
   :repl-options {:init-ns aws-xray-sdk-clj.core}
   :profiles
-  {:dev {:dependencies [[cuid "0.1.2"]]}})
+  {:dev {:dependencies [[cuid "0.1.2"]
+                        [org.clojure/data.json "2.4.0"]]}})

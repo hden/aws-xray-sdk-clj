@@ -44,6 +44,8 @@
   builder)
 
 (defn ^AWSXRayRecorder recorder
+  "Create an AWSXRayRecorder with options.
+  Useful when you don't want to use the global recorder."
   ([] (recorder {}))
   ([{:keys [^Emitter emitter plugins ^SamplingStrategy sampling-strategy]}]
    (cond-> (AWSXRayRecorderBuilder/standard)
@@ -98,6 +100,11 @@
   (close! [entity]))
 
 (extend-protocol AutoCloseable
+  Subsegment
+  (close! [subsegment]
+    (let [^AWSXRayRecorder recorder (.getCreator subsegment)]
+      (.endSubsegment recorder subsegment)))
+
   Entity
   (close! [entity]
     (.run entity #(.close entity))))
@@ -105,7 +112,7 @@
 (defmacro with-open
   "bindings => [name init ...]
   Evaluates body in a try expression with names bound to the values
-  of the inits, and a finally clause that calls (.close name) on each
+  of the inits, and a finally clause that calls (close! name) on each
   name in reverse order."
   [bindings & body]
   (cond

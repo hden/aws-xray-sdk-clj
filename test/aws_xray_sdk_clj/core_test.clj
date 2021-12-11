@@ -1,21 +1,13 @@
 (ns aws-xray-sdk-clj.core-test
   (:require [aws-xray-sdk-clj.core :as core]
+            [aws-xray-sdk-clj.test-util :as util]
             [clojure.test :refer [are deftest is testing use-fixtures]])
-  (:import [com.amazonaws.xray.emitters Emitter]
-           [com.amazonaws.xray.entities Entity TraceID]))
+  (:import [com.amazonaws.xray.entities Entity]))
 
 (def segments (atom []))
 (def entity (atom {}))
 
-(def mock-emitter
-  (proxy [Emitter][]
-    (sendSegment [x]
-      (swap! segments conj x)
-      true)
-
-    (sendSubsegment [x]
-      (swap! segments conj x)
-      true)))
+(def mock-emitter (util/mock-emitter segments))
 
 (def mock-entity
   (reify Entity
@@ -45,15 +37,6 @@
 (use-fixtures :each reset-fixtures!)
 
 (def recorder (core/recorder {:emitter mock-emitter}))
-
-(defn trace-id []
-  (.toString (TraceID/create recorder)))
-
-(defn annotations [x]
-  (into {} (.getAnnotations x)))
-
-(defn subsegments [segment]
-  (into [] (.getSubsegments segment)))
 
 (deftest entity-test
   (testing "set-exception!"
@@ -88,27 +71,25 @@
 
 (deftest segment-test
   (testing "begin-segment!"
-    (let [data {"foo" "bar"}]
-      (with-open [segment (core/begin! recorder {:trace-id (trace-id)
-                                                 :name     "foo"})]
-        (core/set-annotation! segment data))
-      (is (= 1 (count @segments)))
-      (let [segment (first @segments)]
-        (is (= "foo" (.getName segment)))
-        (is (= 0 (count (subsegments segment))))
-        (is (= data (annotations segment)))))))
+    (with-open [segment (core/begin! recorder {:trace-id (util/trace-id recorder)
+                                               :name     "foo"})]
+      (core/set-annotation! segment {"foo" "bar"}))
+    (is (= 1 (count @segments)))
+    (let [segment (first @segments)]
+      (is (= "foo" (:name segment)))
+      (is (nil? (seq (:subsegments segment))))
+      (is (= "bar" (get-in segment [:annotations :foo]))))))
 
 (deftest subsegment-test
   (testing "begin-subsegment!"
-    (let [data {"foo" "bar"}]
-      (core/with-open [segment (core/begin! recorder {:trace-id (trace-id)
-                                                      :name     "bar"})]
-        (core/with-open [subsegment (core/begin! segment {:name "baz"})]
-          (core/set-annotation! subsegment data)))
-      (is (= 1 (count @segments)))
-      (let [segment (first @segments)
-            subsegments (subsegments segment)
-            subsegment (first subsegments)]
-        (is (= "bar" (.getName segment)))
-        (is (= 1 (count subsegments)))
-        (is (= data (annotations subsegment)))))))
+    (core/with-open [segment (core/begin! recorder {:trace-id (util/trace-id recorder)
+                                                    :name     "bar"})]
+      (core/with-open [subsegment (core/begin! segment {:name "baz"})]
+        (core/set-annotation! subsegment {"foo" "bar"})))
+    (is (= 1 (count @segments)))
+    (let [segment (first @segments)
+          subsegments (:subsegments segment)
+          subsegment (first subsegments)]
+      (is (= "bar" (:name segment)))
+      (is (= 1 (count subsegments)))
+      (is (= "bar" (get-in subsegment [:annotations :foo]))))))
