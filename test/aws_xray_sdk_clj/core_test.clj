@@ -1,9 +1,11 @@
 (ns aws-xray-sdk-clj.core-test
   (:refer-clojure :exclude [with-open])
   (:require [aws-xray-sdk-clj.core :as core]
+            [aws-xray-sdk-clj.impl :as impl]
+            [aws-xray-sdk-clj.protocols :as protocols]
             [aws-xray-sdk-clj.test-util :as util]
             [clojure.test :refer [are deftest is testing use-fixtures]])
-  (:import [com.amazonaws.xray.entities Entity Segment Subsegment]))
+  (:import [com.amazonaws.xray.entities Entity]))
 
 (def segments (atom []))
 (def entity (atom {}))
@@ -11,24 +13,25 @@
 (def mock-emitter (util/mock-emitter segments))
 
 (def mock-entity
-  (reify Entity
-    (addException [_ ex]
-      (swap! entity assoc :exception ex))
+  (impl/->AEntity
+    (reify Entity
+      (addException [_ ex]
+        (swap! entity assoc :exception ex))
 
-    (setError [_ x]
-      (swap! entity assoc :error x))
+      (setError [_ x]
+        (swap! entity assoc :error x))
 
-    (^void putAnnotation [_ ^String k ^String v]
-      (swap! entity assoc k v))
+      (^void putAnnotation [_ ^String k ^String v]
+        (swap! entity assoc k v))
 
-    (^void putAnnotation [_ ^String k ^Number v]
-      (swap! entity assoc k v))
+      (^void putAnnotation [_ ^String k ^Number v]
+        (swap! entity assoc k v))
 
-    (^void putAnnotation [_ ^String k ^Boolean v]
-      (swap! entity assoc k v))
+      (^void putAnnotation [_ ^String k ^Boolean v]
+        (swap! entity assoc k v))
 
-    (putMetadata [_ k v]
-      (swap! entity assoc k v))))
+      (putMetadata [_ k v]
+        (swap! entity assoc k v)))))
 
 (defn reset-fixtures! [f]
   (reset! segments [])
@@ -80,20 +83,23 @@
 (deftest with-open-test
   (testing "exception handler"
     (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Oops"
-          (core/with-open [segment (core/begin! recorder {:trace-id (util/trace-id recorder)
+          (core/with-open [segment (core/start! recorder {:trace-id (util/trace-id recorder)
                                                           :name     "hoge"})]
             (core/set-annotation! segment {"foo" "bar"})
             (throw (ex-info "Oops" {})))))
-    (is (= 1 (count @segments)))))
+    (is (= 1 (count @segments)))
+    (let [segment (first @segments)]
+      (is (:error segment)))))
 
 (deftest segment-test
   (testing "begin-segment!, nil"
-    (core/with-open [segment (core/begin! nil {:trace-id (util/trace-id recorder)
+    (core/with-open [segment (core/start! nil {:trace-id (util/trace-id recorder)
                                                :name     "foo"})]
-      (is (instance? Segment segment))))
+      (is (satisfies? protocols/IEntity segment))
+      (is (satisfies? protocols/IEntityProvider segment))))
 
   (testing "begin-segment!"
-    (core/with-open [segment (core/begin! recorder {:trace-id (util/trace-id recorder)
+    (core/with-open [segment (core/start! recorder {:trace-id (util/trace-id recorder)
                                                     :name     "foo"})]
       (core/set-annotation! segment {"foo" "bar"}))
     (is (= 1 (count @segments)))
@@ -104,15 +110,16 @@
 
 (deftest subsegment-test
   (testing "begin-subsegment!, nil"
-    (core/with-open [segment (core/begin! nil {:trace-id (util/trace-id recorder)
+    (core/with-open [segment (core/start! nil {:trace-id (util/trace-id recorder)
                                                :name     "foo"})]
-      (core/with-open [subsegment (core/begin! segment {:name "bar"})]
-        (is (instance? Subsegment subsegment)))))
+      (core/with-open [subsegment (core/start! segment {:name "bar"})]
+        (is (satisfies? protocols/IEntity subsegment))
+        (is (satisfies? protocols/IEntityProvider subsegment)))))
 
   (testing "begin-subsegment!"
-    (core/with-open [segment (core/begin! recorder {:trace-id (util/trace-id recorder)
+    (core/with-open [segment (core/start! recorder {:trace-id (util/trace-id recorder)
                                                     :name     "bar"})]
-      (core/with-open [subsegment (core/begin! segment {:name "baz"})]
+      (core/with-open [subsegment (core/start! segment {:name "baz"})]
         (core/set-annotation! subsegment {"foo" "bar"})))
     (is (= 1 (count @segments)))
     (let [segment (first @segments)

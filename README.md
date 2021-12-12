@@ -19,10 +19,10 @@ For synchronous execution
 
 (def trace-id (core/root-trace-id http-header-string))
 
-(with-open [segment (core/begin! core/global-recorder {:trace-id trace-id
+(with-open [segment (core/start! core/global-recorder {:trace-id trace-id
                                                        :name     "foo"})]
   (core/set-annotation! segment {:foo "bar"})
-  (core/with-open [subsegment (core/begin! segment {:name "baz"})]
+  (core/with-open [subsegment (core/start! segment {:name "baz"})]
     (core/set-annotation! subsegment {:bar "baz"})))
 ```
 
@@ -33,7 +33,7 @@ For asynchronous codes
 (require '[aws-xray-sdk-clj.promise :refer [with-segment]])
 
 ;; A light wrapper around promesa/finally
-@(with-segment [segment (core/begin! recorder {:trace-id trace-id
+@(with-segment [segment (core/start! recorder {:trace-id trace-id
                                                :name     "bar"})]
    (promesa/delay 10 "foobar"))
 ```

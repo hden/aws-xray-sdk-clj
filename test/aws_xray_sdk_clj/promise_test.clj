@@ -22,7 +22,7 @@
 (def recorder (core/recorder {:emitter mock-emitter}))
 
 (deftest ex-handler-test
-  (let [p (with-segment [segment (core/begin! recorder {:trace-id (util/trace-id recorder)
+  (let [p (with-segment [segment (core/start! recorder {:trace-id (util/trace-id recorder)
                                                         :name     "foo"})]
             (-> (promesa/delay 1 "foobar")
               (promesa/then (fn [_]
@@ -34,7 +34,7 @@
       (is (:error segment)))))
 
 (deftest async-segment-test
-  (let [p (with-segment [segment (core/begin! recorder {:trace-id (util/trace-id recorder)
+  (let [p (with-segment [segment (core/start! recorder {:trace-id (util/trace-id recorder)
                                                         :name     "foo"})]
             (-> (promesa/delay 10 "foobar")
               (promesa/finally (fn [_ _]
@@ -47,11 +47,11 @@
       (is (= "bar" (get-in segment [:annotations :foo]))))))
 
 (deftest async-subsegment-test
-  (let [p (with-segment [segment (core/begin! recorder {:trace-id (util/trace-id recorder)
+  (let [p (with-segment [segment (core/start! recorder {:trace-id (util/trace-id recorder)
                                                         :name     "bar"})]
             (-> (promesa/delay 10 "foobar")
               (promesa/then (fn [_]
-                              (with-segment [subsegment (core/begin! segment {:name "baz"})]
+                              (with-segment [subsegment (core/start! segment {:name "baz"})]
                                 (-> (promesa/delay 10 "baz")
                                   (promesa/finally (fn [_ _]
                                                      (core/set-annotation! subsegment {"foo" "bar"}))
@@ -70,7 +70,7 @@
          (-> (promesa/delay (rand-int 10) true)
            (promesa/then (fn [_]
                            (let [id (cuid)]
-                             (with-segment [subsegment (core/begin! segment {:name id})]
+                             (with-segment [subsegment (core/start! segment {:name id})]
                                (-> (promesa/delay (rand-int 10) true)
                                  (promesa/then (fn [_]
                                                  (core/set-annotation! subsegment {:id id})
@@ -82,7 +82,7 @@
 ;; Ensure we don't stumble on a deadlock due to synchronized blocks.
 ;; https://github.com/aws/aws-xray-sdk-java/issues/303
 (deftest random-subsegment-test
-  @(with-segment [segment (core/begin! recorder {:trace-id (util/trace-id recorder)
+  @(with-segment [segment (core/start! recorder {:trace-id (util/trace-id recorder)
                                                  :name     "baz"})]
      (promesa/all (random-subsegments segment 50)))
   (is (<= 1 (count @segments))))
