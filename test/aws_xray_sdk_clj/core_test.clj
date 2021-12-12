@@ -1,4 +1,5 @@
 (ns aws-xray-sdk-clj.core-test
+  (:refer-clojure :exclude [with-open])
   (:require [aws-xray-sdk-clj.core :as core]
             [aws-xray-sdk-clj.test-util :as util]
             [clojure.test :refer [are deftest is testing use-fixtures]])
@@ -79,21 +80,21 @@
 (deftest with-open-test
   (testing "exception handler"
     (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Oops"
-          (with-open [segment (core/begin! recorder {:trace-id (util/trace-id recorder)
-                                                     :name     "hoge"})]
+          (core/with-open [segment (core/begin! recorder {:trace-id (util/trace-id recorder)
+                                                          :name     "hoge"})]
             (core/set-annotation! segment {"foo" "bar"})
             (throw (ex-info "Oops" {})))))
     (is (= 1 (count @segments)))))
 
 (deftest segment-test
   (testing "begin-segment!, nil"
-    (with-open [segment (core/begin! nil {:trace-id (util/trace-id recorder)
-                                          :name     "foo"})]
+    (core/with-open [segment (core/begin! nil {:trace-id (util/trace-id recorder)
+                                               :name     "foo"})]
       (is (instance? Segment segment))))
 
   (testing "begin-segment!"
-    (with-open [segment (core/begin! recorder {:trace-id (util/trace-id recorder)
-                                               :name     "foo"})]
+    (core/with-open [segment (core/begin! recorder {:trace-id (util/trace-id recorder)
+                                                    :name     "foo"})]
       (core/set-annotation! segment {"foo" "bar"}))
     (is (= 1 (count @segments)))
     (let [segment (first @segments)]
@@ -103,8 +104,8 @@
 
 (deftest subsegment-test
   (testing "begin-subsegment!, nil"
-    (with-open [segment (core/begin! nil {:trace-id (util/trace-id recorder)
-                                          :name     "foo"})]
+    (core/with-open [segment (core/begin! nil {:trace-id (util/trace-id recorder)
+                                               :name     "foo"})]
       (core/with-open [subsegment (core/begin! segment {:name "bar"})]
         (is (instance? Subsegment subsegment)))))
 
