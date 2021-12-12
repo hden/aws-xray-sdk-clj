@@ -26,6 +26,7 @@
                                                         :name     "foo"})]
             (-> (promesa/delay 1 "foobar")
               (promesa/then (fn [_]
+                              (core/set-annotation! segment {"foo" "bar"})
                               (throw (ex-info "Oops" {"foo" "bar"}))))))]
     (is (thrown-with-msg? java.util.concurrent.ExecutionException #"Oops" @p))
     (is (= 1 (count @segments)))
