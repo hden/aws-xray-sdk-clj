@@ -7,7 +7,7 @@
            [com.amazonaws.xray.plugins Plugin]
            [com.amazonaws.xray.strategy.sampling SamplingStrategy]))
 
-(def global-recorder (AWSXRay/getGlobalRecorder))
+(def ^AWSXRayRecorder global-recorder (AWSXRay/getGlobalRecorder))
 
 (defmacro ^:private when-let*
   [bindings & body]
