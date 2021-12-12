@@ -83,5 +83,5 @@
 (deftest random-subsegment-test
   @(with-segment [segment (core/begin! recorder {:trace-id (util/trace-id recorder)
                                                  :name     "baz"})]
-     (promesa/all (random-subsegments segment 20)))
+     (promesa/all (random-subsegments segment 50)))
   (is (<= 1 (count @segments))))
