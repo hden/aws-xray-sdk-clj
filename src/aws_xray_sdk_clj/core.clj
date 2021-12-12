@@ -18,25 +18,28 @@
 
 (defn set-exception!
   [^Entity entity ^Throwable ex]
-  (doto entity
-    (.addException ex)
-    (.setError true)))
+  (when entity
+    (doto entity
+      (.addException ex)
+      (.setError true))))
 
 (defn set-annotation!
   [^Entity entity m]
-  (doseq [[k v] m]
-    (let [^String key (csk/->snake_case_string k)]
-      (cond
-        (boolean? v) (.putAnnotation entity key ^Boolean v)
-        (number? v)  (.putAnnotation entity key ^Number v)
-        :else        (.putAnnotation entity key (str v)))))
-  entity)
+  (when entity
+    (doseq [[k v] m]
+      (let [^String key (csk/->snake_case_string k)]
+        (cond
+          (boolean? v) (.putAnnotation entity key ^Boolean v)
+          (number? v)  (.putAnnotation entity key ^Number v)
+          :else        (.putAnnotation entity key (str v)))))
+    entity))
 
 (defn set-metadata!
   [^Entity entity m]
-  (doseq [[k v] m]
-    (.putMetadata entity (csk/->snake_case_string k) (str v)))
-  entity)
+  (when entity
+    (doseq [[k v] m]
+      (.putMetadata entity (csk/->snake_case_string k) (str v)))
+    entity))
 
 (defn- ^AWSXRayRecorderBuilder apply-plugins! [^AWSXRayRecorderBuilder builder plugins]
   (doseq [^Plugin plugin plugins]
@@ -94,7 +97,11 @@
 
   Entity
   (begin! [provider arg-map]
-    (begin-subsegment! provider arg-map)))
+    (begin-subsegment! provider arg-map))
+
+  nil
+  (begin! [_ _]
+    (.beginNoOpSegment global-recorder)))
 
 (defprotocol AutoCloseable
   (close! [entity]))
@@ -107,7 +114,11 @@
 
   Entity
   (close! [entity]
-    (.run entity #(.close entity))))
+    (.run entity #(.close entity)))
+
+  nil
+  (close! [_]
+    nil))
 
 (defmacro with-open
   "bindings => [name init ...]

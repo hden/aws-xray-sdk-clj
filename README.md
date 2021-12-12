@@ -5,10 +5,9 @@ A light wrapper for aws-xray-sdk-java.
 
 ## Why
 
-aws-xray-sdk-java heavily use thread local storage and mutations, which can cause
-lots of accidental complexity when beginning and ending segments / subsegments.
+> High mutability and circular refrences between segments and subsegments create a prime landscape for thread issues. -- https://github.com/aws/aws-xray-sdk-java/pull/306#issue-1011630726
 
-This library tries to mitigate the problem by making sure that the thread local
+This library tries to mitigate the problems by making sure that the thread local
 context is set before any operations.
 
 ## Usage

@@ -21,6 +21,17 @@
 
 (def recorder (core/recorder {:emitter mock-emitter}))
 
+(deftest ex-handler-test
+  (let [p (with-segment [segment (core/begin! recorder {:trace-id (util/trace-id recorder)
+                                                        :name     "foo"})]
+            (-> (promesa/delay 1 "foobar")
+              (promesa/then (fn [_]
+                              (throw (ex-info "Oops" {"foo" "bar"}))))))]
+    (is (thrown-with-msg? java.util.concurrent.ExecutionException #"Oops" @p))
+    (is (= 1 (count @segments)))
+    (let [segment (first @segments)]
+      (is (:error segment)))))
+
 (deftest async-segment-test
   (let [p (with-segment [segment (core/begin! recorder {:trace-id (util/trace-id recorder)
                                                         :name     "foo"})]
