@@ -3,10 +3,11 @@
             [promesa.core :as promesa]))
 
 (defn handler [entity]
-  (fn [_ ex]
+  (fn [x ex]
     (when ex
       (core/set-exception! entity ex))
-    (core/close! entity)))
+    (core/close! entity)
+    x))
 
 (defmacro with-segment
   "bindings => [name init ...]

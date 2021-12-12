@@ -1,4 +1,4 @@
 {:lint-as
- {aws-xray-sdk-clj.core/when-let* clojure.core/let
+ {aws-xray-sdk-clj.impl/when-let* clojure.core/let
   aws-xray-sdk-clj.core/with-open clojure.core/with-open
   aws-xray-sdk-clj.promise/with-segment clojure.core/with-open}}
