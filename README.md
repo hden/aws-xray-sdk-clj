@@ -19,8 +19,8 @@ For synchronous execution
 
 (def trace-id (core/root-trace-id http-header-string))
 
-(with-open [segment (core/start! core/global-recorder {:trace-id trace-id
-                                                       :name     "foo"})]
+(core/with-open [segment (core/start! core/global-recorder {:trace-id trace-id
+                                                            :name     "foo"})]
   (core/set-annotation! segment {:foo "bar"})
   (core/with-open [subsegment (core/start! segment {:name "baz"})]
     (core/set-annotation! subsegment {:bar "baz"})))
