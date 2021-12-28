@@ -16,5 +16,5 @@
   name."
   [bindings & body]
   `(let ~(subvec bindings 0 2)
-     (promesa/finally ~@body
+     (promesa/finally (do ~@body)
                       (handler ~(bindings 0)))))
