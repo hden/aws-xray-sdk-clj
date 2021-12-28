@@ -24,10 +24,9 @@
 (deftest ex-handler-test
   (let [p (with-segment [segment (core/start! recorder {:trace-id (util/trace-id recorder)
                                                         :name     "foo"})]
-            (-> (promesa/delay 1 "foobar")
-              (promesa/then (fn [_]
-                              (core/set-annotation! segment {"foo" "bar"})
-                              (throw (ex-info "Oops" {"foo" "bar"}))))))]
+            (promesa/future
+              (core/set-annotation! segment {"foo" "bar"})
+              (throw (ex-info "Oops" {"foo" "bar"}))))]
     (is (thrown-with-msg? java.util.concurrent.ExecutionException #"Oops" @p))
     (is (= 1 (count @segments)))
     (let [segment (first @segments)]
@@ -36,10 +35,8 @@
 (deftest async-segment-test
   (let [p (with-segment [segment (core/start! recorder {:trace-id (util/trace-id recorder)
                                                         :name     "foo"})]
-            (-> (promesa/delay 10 "foobar")
-              (promesa/finally (fn [_ _]
-                                 (core/set-annotation! segment {"foo" "bar"}))
-                               exec/default-executor)))]
+            (core/set-annotation! segment {"foo" "bar"})
+            (promesa/delay 10 "foobar"))]
     (is (= "foobar" @p))
     (let [segment (first @segments)]
       (is (= "foo" (:name segment)))
@@ -52,10 +49,8 @@
             (-> (promesa/delay 10 "foobar")
               (promesa/then (fn [_]
                               (with-segment [subsegment (core/start! segment {:name "baz"})]
-                                (-> (promesa/delay 10 "baz")
-                                  (promesa/finally (fn [_ _]
-                                                     (core/set-annotation! subsegment {"foo" "bar"}))
-                                                   exec/default-executor))))
+                                (core/set-annotation! subsegment {"foo" "bar"})
+                                (promesa/delay 10 "baz")))
                             exec/default-executor)))]
     (is (= "baz" @p))
     (let [segment (first @segments)
