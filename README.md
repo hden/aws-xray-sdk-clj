@@ -30,10 +30,10 @@ For asynchronous codes
 
 ```clj
 (require '[promesa.core :as promesa])
-(require '[aws-xray-sdk-clj.promise :refer [with-segment]])
+(require '[aws-xray-sdk-clj.promise :refer [with-open]])
 
 ;; A light wrapper around promesa/finally
-@(with-segment [segment (core/start! recorder {:trace-id trace-id
+@(with-open [segment (core/start! recorder {:trace-id trace-id
                                                :name     "bar"})]
    (promesa/delay 10 "foobar"))
 ```
