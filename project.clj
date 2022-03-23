@@ -4,7 +4,7 @@
   :license {:name "Apache License, Version 2.0"
             :url "https://www.apache.org/licenses/LICENSE-2.0"}
   :java-source-paths ["src/java"]
-  :dependencies [[org.clojure/clojure "1.10.3"]
+  :dependencies [[org.clojure/clojure "1.11.0"]
                  [camel-snake-kebab "0.4.2"]
                  [com.amazonaws/aws-xray-recorder-sdk-core "2.8.0"]
                  [funcool/promesa "6.1.436"]]
