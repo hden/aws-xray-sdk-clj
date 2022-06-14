@@ -6,7 +6,7 @@
   :java-source-paths ["src/java"]
   :dependencies [[org.clojure/clojure "1.11.1"]
                  [camel-snake-kebab "0.4.3"]
-                 [com.amazonaws/aws-xray-recorder-sdk-core "2.8.0"]
+                 [com.amazonaws/aws-xray-recorder-sdk-core "2.11.2"]
                  [funcool/promesa "8.0.450"]]
   :plugins [[lein-cloverage "1.2.4"]]
   :repl-options {:init-ns aws-xray-sdk-clj.core}
