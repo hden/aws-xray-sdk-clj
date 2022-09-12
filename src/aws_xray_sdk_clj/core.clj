@@ -10,14 +10,16 @@
   [arg-map]
   (impl/recorder arg-map))
 
-(defn ^String root-trace-id
+(defn root-trace-id
   "Get the root trace ID from a HTTP Header string."
+  ^String
   [^String s]
   (when s
     (protocol/-root-trace-id s)))
 
-(defn ^String parent-id
+(defn parent-id
   "Get the parent ID from a HTTP Header string."
+  ^String
   [^String s]
   (when s
     (protocol/-parent-id s)))

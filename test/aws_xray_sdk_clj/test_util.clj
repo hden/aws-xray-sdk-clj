@@ -1,7 +1,8 @@
 (ns aws-xray-sdk-clj.test-util
   (:require [clojure.data.json :as json])
   (:import [com.amazonaws.xray.emitters Emitter]
-           [com.amazonaws.xray.entities Entity Subsegment TraceID]))
+           [com.amazonaws.xray.entities Entity Subsegment TraceID]
+           [java.time Clock Instant ZoneId]))
 
 (defprotocol Serializable
   (serialize [entity]))
@@ -31,3 +32,7 @@
 
 (defn trace-id [recorder]
   (.toString (TraceID/create recorder)))
+
+(defn mock-clock [x]
+  (Clock/fixed (Instant/ofEpochSecond x)
+               (ZoneId/of "UTC")))

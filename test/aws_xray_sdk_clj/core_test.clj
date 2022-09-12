@@ -1,70 +1,49 @@
 (ns aws-xray-sdk-clj.core-test
   (:refer-clojure :exclude [with-open])
   (:require [aws-xray-sdk-clj.core :as core]
-            [aws-xray-sdk-clj.impl :as impl]
-            [aws-xray-sdk-clj.protocols :as protocols]
             [aws-xray-sdk-clj.test-util :as util]
-            [clojure.test :refer [are deftest is testing use-fixtures]])
-  (:import [com.amazonaws.xray.entities Entity]))
+            [clojure.test :refer [deftest is testing use-fixtures]]
+            [clojure.walk :refer [postwalk]]))
 
 (def segments (atom []))
-(def entity (atom {}))
+(def ^:const fixed-timestamp 1662905704)
 
 (def mock-emitter (util/mock-emitter segments))
-
-(def mock-entity
-  (impl/->AEntity
-    (reify Entity
-      (addException [_ ex]
-        (swap! entity assoc :exception ex))
-
-      (setError [_ x]
-        (swap! entity assoc :error x))
-
-      (^void putAnnotation [_ ^String k ^String v]
-        (swap! entity assoc k v))
-
-      (^void putAnnotation [_ ^String k ^Number v]
-        (swap! entity assoc k v))
-
-      (^void putAnnotation [_ ^String k ^Boolean v]
-        (swap! entity assoc k v))
-
-      (putMetadata [_ k v]
-        (swap! entity assoc k v)))))
+(def mock-clock (util/mock-clock fixed-timestamp))
 
 (defn reset-fixtures! [f]
   (reset! segments [])
-  (reset! entity {})
   (f))
 
 (use-fixtures :each reset-fixtures!)
 
 (def recorder (core/recorder {:emitter mock-emitter}))
 
-(deftest entity-test
+(deftest set-exception-test
   (testing "set-exception!"
-    (let [ex (ex-info "test" {:foo "bar"})]
-      (is (nil? (core/set-exception! nil ex)))
-      (core/set-exception! mock-entity ex)
-      (is (= ex (get @entity :exception)))
-      (is (= true (get @entity :error)))))
+    (let [segment (core/start! recorder {:name "foo" :clock mock-clock})
+          ex (ex-info "test" {:foo "bar"})]
+      (core/set-exception! segment ex)
+      (core/close! segment)
+      (is (= "test" (get-in @segments [0 :cause :exceptions 0 :message]))))))
 
+(deftest set-annotation-test
   (testing "set-annotation!"
-    (is (nil? (core/set-annotation! nil {})))
-    (are [x y]
-      (do
-        (core/set-annotation! mock-entity {x y})
-        (= y (get @entity x)))
+    (let [segment (core/start! recorder {:name "foo" :clock mock-clock})
+          annotations {:string  "string"
+                       :number  123
+                       :boolean true}]
+      (core/set-annotation! segment annotations)
+      (core/close! segment)
+      (is (= annotations (get-in @segments [0 :annotations]))))))
 
-      "string"  "string"
-      "number"  123
-      "boolean" true))
-
+(deftest set-metadata-test
   (testing "set-metadata!"
-    (is (nil? (core/set-metadata! nil {})))
-    (core/set-metadata! mock-entity {"foobar" "baz"})
-    (is (= "baz" (get @entity "foobar")))))
+    (let [segment (core/start! recorder {:name "foo" :clock mock-clock})
+          metadata {:foobar "baz"}]
+      (core/set-metadata! segment metadata)
+      (core/close! segment)
+      (is (= metadata (get-in @segments [0 :metadata :default]))))))
 
 (deftest trace-header-test
   (let [header "Sampled=?;Root=1-57ff426a-80c11c39b0c928905eb0828d;Parent=foo;Self=2;Foo=bar"]
@@ -77,54 +56,97 @@
     (testing "parent-id"
       (is (nil? (core/parent-id nil)))
 
-      (is (= "foo"
-             (core/parent-id header))))))
+      (is (= "foo" (core/parent-id header))))))
 
-(deftest with-open-test
+(deftest with-open-close-test
+  (testing "close"
+    (core/with-open [segment (core/start! recorder {:trace-id (util/trace-id recorder)
+                                                    :clock    mock-clock
+                                                    :name     "hoge"})]
+      (core/set-annotation! segment {"foo" "bar"}))
+    (is (= "hoge" (get-in @segments [0 :name])))))
+
+(deftest with-open-exception-handler-test
   (testing "exception handler"
     (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Oops"
           (core/with-open [segment (core/start! recorder {:trace-id (util/trace-id recorder)
+                                                          :clock    mock-clock
                                                           :name     "hoge"})]
             (core/set-annotation! segment {"foo" "bar"})
             (throw (ex-info "Oops" {})))))
     (is (= 1 (count @segments)))
-    (let [segment (first @segments)]
-      (is (:error segment)))))
+    (is (= "Oops" (get-in @segments [0 :cause :exceptions 0 :message])))))
 
 (deftest segment-test
-  (testing "begin-segment!, nil"
-    (core/with-open [segment (core/start! nil {:trace-id (util/trace-id recorder)
-                                               :name     "foo"})]
-      (is (satisfies? protocols/IEntity segment))
-      (is (satisfies? protocols/IEntityProvider segment))))
-
   (testing "begin-segment!"
     (core/with-open [segment (core/start! recorder {:trace-id (util/trace-id recorder)
+                                                    :clock    mock-clock
                                                     :name     "foo"})]
       (core/set-annotation! segment {"foo" "bar"}))
-    (is (= 1 (count @segments)))
-    (let [segment (first @segments)]
-      (is (= "foo" (:name segment)))
-      (is (nil? (seq (:subsegments segment))))
-      (is (= "bar" (get-in segment [:annotations :foo]))))))
+    (let [coll @segments]
+      (is (= 1 (count coll)))
+      (is (= "foo" (get-in coll [0 :name])))
+      (is (= (double fixed-timestamp) (get-in coll [0 :start_time])))
+      (is (= (double fixed-timestamp) (get-in coll [0 :end_time])))
+      (is (nil? (seq (get-in coll [0 :subsegments]))))
+      (is (= {:foo "bar"} (get-in coll [0 :annotations]))))))
 
 (deftest subsegment-test
-  (testing "begin-subsegment!, nil"
-    (core/with-open [segment (core/start! nil {:trace-id (util/trace-id recorder)
-                                               :name     "foo"})]
-      (core/with-open [subsegment (core/start! segment {:name "bar"})]
-        (is (satisfies? protocols/IEntity subsegment))
-        (is (satisfies? protocols/IEntityProvider subsegment)))))
-
   (testing "begin-subsegment!"
     (core/with-open [segment (core/start! recorder {:trace-id (util/trace-id recorder)
-                                                    :name     "bar"})]
-      (core/with-open [subsegment (core/start! segment {:name "baz"})]
-        (core/set-annotation! subsegment {"foo" "bar"})))
-    (is (= 1 (count @segments)))
-    (let [segment (first @segments)
-          subsegments (:subsegments segment)
-          subsegment (first subsegments)]
-      (is (= "bar" (:name segment)))
-      (is (= 1 (count subsegments)))
-      (is (= "bar" (get-in subsegment [:annotations :foo]))))))
+                                                    :clock    mock-clock
+                                                    :name     "foo"})]
+      (core/with-open [subsegment (core/start! segment {:name "bar"})]
+        (core/set-annotation! subsegment {:foo "bar"})))
+    (let [coll @segments]
+      (is (= 1 (count coll)))
+      (is (= "foo" (get-in coll [0 :name])))
+      (is (= "bar" (get-in coll [0 :subsegments 0 :name])))
+      (is (= {:foo "bar"} (get-in coll [0 :subsegments 0 :annotations]))))))
+
+(deftest big-tree-test
+  (testing "begin-subsegment!"
+    (core/with-open [root (core/start! recorder {:trace-id (util/trace-id recorder)
+                                                    :clock    mock-clock
+                                                    :name     "root"})]
+      (core/with-open [a (core/start! root {:name "1"})]
+        (core/with-open [b (core/start! a {:name "1-1"})]
+          (core/set-annotation! b {:foo "bar"}))
+        (core/with-open [c (core/start! a {:name "1-2"})]
+          (core/with-open [d (core/start! c {:name "1-2-1"})]
+            (core/set-annotation! d {:foo "bar"})))
+        (core/with-open [d (core/start! a {:name "1-3"})]
+          (core/with-open [e (core/start! d {:name "1-3-1"})]
+            (core/set-annotation! e {:foo "bar"}))
+          (core/with-open [f (core/start! d {:name "1-3-2"})]
+            (core/set-annotation! f {:foo "bar"}))))
+      (core/with-open [g (core/start! root {:name "2"})]
+        (core/with-open [h (core/start! g {:name "2-1"})]
+          (core/with-open [i (core/start! h {:name "2-1-1"})]
+            (core/with-open [j (core/start! i {:name "2-1-1-1"})]
+              (core/set-annotation! j {:foo "bar"}))))))
+    (let [coll @segments]
+      (is (= [{:name "root"
+               :subsegments
+               [{:name "1"
+                 :subsegments
+                 [{:name "1-1"}
+                  {:name "1-2"
+                   :subsegments
+                   [{:name "1-2-1"}]}
+                  {:name "1-3"
+                   :subsegments
+                   [{:name "1-3-1"}
+                    {:name "1-3-2"}]}]}
+                {:name "2"
+                 :subsegments
+                 [{:name "2-1"
+                   :subsegments
+                   [{:name "2-1-1"
+                     :subsegments
+                     [{:name "2-1-1-1"}]}]}]}]}]
+             (postwalk (fn [x]
+                         (if (map? x)
+                           (select-keys x [:name :subsegments])
+                           x))
+                       coll))))))

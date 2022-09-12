@@ -1,4 +1,4 @@
-(defproject com.github.hden/aws-xray-sdk-clj "0.6.0"
+(defproject com.github.hden/aws-xray-sdk-clj "0.7.0"
   :description "A light wrapper for aws-xray-sdk-java"
   :url "https://github.com/hden/aws-xray-sdk-clj"
   :license {:name "Apache License, Version 2.0"
@@ -7,6 +7,7 @@
   :dependencies [[org.clojure/clojure "1.11.1"]
                  [camel-snake-kebab "0.4.3"]
                  [com.amazonaws/aws-xray-recorder-sdk-core "2.8.0"]
+                 [datascript "1.3.15"]
                  [funcool/promesa "8.0.450"]]
   :plugins [[lein-cloverage "1.2.4"]]
   :repl-options {:init-ns aws-xray-sdk-clj.core}
