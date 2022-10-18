@@ -5,9 +5,10 @@
             [aws-xray-sdk-clj.test-util :as util]
             [clojure.test :refer [deftest is use-fixtures]]
             [cuid.core :refer [cuid]]
-            [promesa.core :as promesa]
-            [promesa.exec :as exec]))
+            [promesa.core :as promesa])
+  (:import java.util.concurrent.ForkJoinPool))
 
+(def default-executor (ForkJoinPool/commonPool))
 (def segments (atom []))
 (def ^:const fixed-timestamp 1662905704)
 
@@ -56,7 +57,7 @@
                                 (with-open [subsegment (core/start! segment {:name "baz"})]
                                   (core/set-annotation! subsegment {:foo "bar"})
                                   (promesa/delay 10 "baz")))
-                              exec/default-executor)))]
+                              default-executor)))]
     (is (= "baz" @p))
     (let [coll @segments]
       (is (= "bar" (get-in coll [0 :name])))
@@ -74,8 +75,8 @@
                                    (promesa/then (fn [_]
                                                    (core/set-annotation! subsegment {:id id})
                                                    (promesa/all (random-subsegments subsegment (int (Math/floor (/ n 2))))))
-                                                 exec/default-executor)))))
-                           exec/default-executor)))
+                                                 default-executor)))))
+                           default-executor)))
        (range n)))
 
 ;; Ensure we don't stumble on a deadlock due to synchronized blocks.

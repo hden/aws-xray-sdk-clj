@@ -11,6 +11,7 @@
                  [funcool/promesa "8.0.450"]]
   :plugins [[lein-cloverage "1.2.4"]]
   :repl-options {:init-ns aws-xray-sdk-clj.core}
+  :global-vars {*warn-on-reflection* true}
   :profiles
   {:dev {:dependencies [[cuid "0.1.2"]
                         [org.clojure/data.json "2.4.0"]]}})
