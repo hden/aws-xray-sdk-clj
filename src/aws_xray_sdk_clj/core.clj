@@ -49,11 +49,10 @@
   [binding & body]
   (let [sym (binding 0)
         entity (binding 1)]
-    `(clojure.core/with-open [entity# ~entity]
+    `(clojure.core/with-open [^java.lang.AutoCloseable entity# ~entity]
        (try
          (let [~sym entity#]
            ~@body)
          (catch RuntimeException ex#
-           (when entity#
-             (protocol/-set-exception! entity# ex#))
+           (set-exception! entity# ex#)
            (throw ex#))))))
