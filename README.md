@@ -7,8 +7,11 @@ A light wrapper for aws-xray-sdk-java.
 
 > High mutability and circular refrences between segments and subsegments create a prime landscape for thread issues. -- https://github.com/aws/aws-xray-sdk-java/pull/306#issue-1011630726
 
-This library tries to mitigate the problems by making sure that the thread local
-context is set before any operations.
+This library tries to mitigate the problems by...
+
+1. Replacing mutability and locks with a clojure atom
+2. Replacing circular refrences (between Java objects) with a in-memory DB ([datascript](https://github.com/tonsky/datascript))
+3. Recursively walk the tree and send the entities (a root segment and its subsegments) to Xray.
 
 ## Usage
 
