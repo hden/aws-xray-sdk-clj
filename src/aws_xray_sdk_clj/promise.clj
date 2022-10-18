@@ -17,5 +17,7 @@
   name."
   [bindings & body]
   `(let ~(subvec bindings 0 2)
-     (promesa/finally (promesa/future ~@body)
-                      (handler ~(bindings 0)))))
+     (-> (promesa/future ~@body)
+       ;; Workaround https://github.com/funcool/promesa/issues/120
+       (promesa/then identity)
+       (promesa/finally (handler ~(bindings 0))))))
