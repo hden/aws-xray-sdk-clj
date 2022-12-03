@@ -7,7 +7,7 @@
   :dependencies [[org.clojure/clojure "1.11.1"]
                  [camel-snake-kebab "0.4.3"]
                  [com.amazonaws/aws-xray-recorder-sdk-core "2.13.0"]
-                 [datascript "1.3.15"]
+                 [datascript "1.4.0"]
                  [funcool/promesa "9.0.489"]]
   :plugins [[lein-cloverage "1.2.4"]]
   :repl-options {:init-ns aws-xray-sdk-clj.core}
