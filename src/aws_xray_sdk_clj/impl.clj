@@ -1,6 +1,7 @@
 (ns aws-xray-sdk-clj.impl
   (:require [aws-xray-sdk-clj.protocols :as protocol]
             [camel-snake-kebab.core :as csk]
+            [clojure.core.async :as a]
             [datascript.core :as d])
   (:import [com.amazonaws.xray AWSXRay AWSXRayRecorder AWSXRayRecorderBuilder]
            [com.amazonaws.xray.emitters Emitter]
@@ -11,6 +12,15 @@
 
 (def ^AWSXRayRecorder global-recorder (AWSXRay/getGlobalRecorder))
 (def ^Clock default-clock (Clock/systemUTC))
+
+(def chan (a/chan 1000))
+
+(def async-send
+  (delay
+    (a/go-loop []
+      (when-let [send-fn (a/<! chan)]
+        (a/thread (send-fn))
+        (recur)))))
 
 (defn- apply-plugins!
   ^AWSXRayRecorderBuilder
@@ -120,10 +130,15 @@
 
   protocol/IAutoCloseable
   (-close! [{:as entity :keys [eid conn]}]
+
     (let [current-timestamp (current-timestamp-seconds clock)]
-      (d/transact! conn [{:db/id eid :end-at current-timestamp}]))
-    (when (= 1 eid)
-      (send-trace! entity))
+      @async-send
+      (a/offer!
+       chan
+       (fn close-and-send-trace []
+         (d/transact! conn [{:db/id eid :end-at current-timestamp}])
+         (when (= 1 eid)
+           (send-trace! entity)))))
     nil)
 
   protocol/IEntity
