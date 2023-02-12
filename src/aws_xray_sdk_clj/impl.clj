@@ -19,7 +19,7 @@
   (delay
     (a/go-loop []
       (when-let [send-fn (a/<! chan)]
-        (a/thread (send-fn))
+        (send-fn)
         (recur)))))
 
 (defn- apply-plugins!
@@ -117,7 +117,8 @@
       (create-subsegment! recorder {:db db :eid eid}))
     (when-let [subsegments (seq (:subsegments tree))]
       (doseq [{:keys [eid]} subsegments]
-        (send-trace! (assoc arg-map :eid eid))))
+        (when-not (= eid 1)
+          (send-trace! (assoc arg-map :eid eid)))))
     (if (= eid 1)
       (.endSegment recorder)
       (.endSubsegment recorder))))
@@ -143,17 +144,26 @@
 
   protocol/IEntity
   (-set-exception! [{:as entity :keys [eid conn]} ex]
-    (d/transact! conn [{:db/id eid :exception ex}])
+    @async-send
+    (a/offer! chan
+              (fn tx-set-exception! []
+                (d/transact! conn [{:db/id eid :exception ex}])))
     entity)
 
   (-set-annotation! [{:as entity :keys [eid conn]} m]
     (let [annotations (sanitize-keys m)]
-      (d/transact! conn [{:db/id eid :annotations annotations}])
+      @async-send
+      (a/offer! chan
+                (fn tx-set-annotations! []
+                  (d/transact! conn [{:db/id eid :annotations annotations}])))
       entity))
 
   (-set-metadata! [{:as entity :keys [eid conn]} m]
     (let [metadata (sanitize-keys m)]
-      (d/transact! conn [{:db/id eid :metadata metadata}])
+      @async-send
+      (a/offer! chan
+                (fn tx-set-metadata! []
+                  (d/transact! conn [{:db/id eid :metadata metadata}])))
       entity)))
 
 (extend-protocol protocol/IEntityProvider
@@ -165,7 +175,11 @@
           current-timestamp (current-timestamp-seconds clock)
           segment (merge (select-keys arg-map [:name :trace-id :parent-id])
                          {:db/id 1 :start-at current-timestamp})]
-      (d/transact! conn [segment])
+      @async-send
+      (a/offer!
+       chan
+       (fn tx-start-data []
+         (d/transact! conn [segment])))
       (->AEntity 1 conn clock recorder)))
 
   AEntity
