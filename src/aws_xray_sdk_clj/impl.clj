@@ -1,8 +1,10 @@
 (ns aws-xray-sdk-clj.impl
   (:require [aws-xray-sdk-clj.protocols :as protocol]
             [camel-snake-kebab.core :as csk]
-            [clojure.core.async :as a]
-            [datascript.core :as d])
+            [clojure.core.async :as a :refer [<!]]
+            [datascript.core :as d]
+            [diehard.core :as dh]
+            [diehard.bulkhead :refer [bulkhead]])
   (:import [com.amazonaws.xray AWSXRay AWSXRayRecorder AWSXRayRecorderBuilder]
            [com.amazonaws.xray.emitters Emitter]
            [com.amazonaws.xray.entities Entity Subsegment TraceID TraceHeader Segment]
@@ -10,17 +12,10 @@
            [com.amazonaws.xray.strategy.sampling SamplingStrategy]
            [java.time Clock]))
 
+(def ^:const root-eid 1)
 (def ^AWSXRayRecorder global-recorder (AWSXRay/getGlobalRecorder))
 (def ^Clock default-clock (Clock/systemUTC))
-
-(def chan (a/chan 1000))
-
-(def async-send
-  (delay
-    (a/go-loop []
-      (when-let [send-fn (a/<! chan)]
-        (send-fn)
-        (recur)))))
+(def default-throttle (bulkhead {:concurrency 1}))
 
 (defn- apply-plugins!
   ^AWSXRayRecorderBuilder
@@ -59,11 +54,12 @@
 
 (defn ^:private current-timestamp-seconds
   [^Clock clock]
-  (double (/ (.millis clock) 1000)))
+  (double (/ (.millis (or clock default-clock))
+             1000)))
 
 (defn ^:private add-attributes!
   ^Entity
-  [^Entity entity {:keys [db eid]}]
+  [^Entity entity {:keys [^Clock clock db eid]}]
   (let [{:keys [start-at end-at annotations exception metadata]}
         (d/pull db '[*] eid)]
     (when start-at
@@ -80,14 +76,14 @@
     (when exception
       (.addException entity exception)
       (.setError entity true))
-    (when end-at
+    (let [end-at (or end-at (current-timestamp-seconds clock))]
       (.setEndTime entity end-at))
     entity))
 
 (defn ^:private create-segment!
   ^Segment
   [^AWSXRayRecorder recorder {:as arg-map :keys [db]}]
-  (let [eid 1
+  (let [eid root-eid
         {:keys [name trace-id parent-id]}
         (d/pull db [:name :trace-id :parent-id] eid)
         segment (if trace-id
@@ -105,88 +101,84 @@
     subsegment))
 
 (defn ^:private send-trace! [{:as arg-map
-                              :keys [eid conn ^AWSXRayRecorder recorder]
-                              :or {eid 1}}]
+                              :keys [^Clock clock conn eid ^AWSXRayRecorder recorder]
+                              :or {eid root-eid}}]
   (let [db @conn
         tree (d/pull db
                      '[[:db/id :as :eid]
                        {:subsegments 1}]
                      eid)]
-    (if (= eid 1)
-      (create-segment! recorder {:db db})
-      (create-subsegment! recorder {:db db :eid eid}))
+    (if (= eid root-eid)
+      (create-segment! recorder {:clock clock :db db})
+      (create-subsegment! recorder {:clock clock :db db :eid eid}))
     (when-let [subsegments (seq (:subsegments tree))]
       (doseq [{:keys [eid]} subsegments]
-        (when-not (= eid 1)
+        (when-not (= eid root-eid)
           (send-trace! (assoc arg-map :eid eid)))))
-    (if (= eid 1)
+    (if (= eid root-eid)
       (.endSegment recorder)
       (.endSubsegment recorder))))
 
-(defrecord AEntity [eid conn ^Clock clock ^AWSXRayRecorder recorder]
+(defrecord AEntity [^Clock clock conn done eid queue]
   ;; Implement AutoCloseable by default so that this can work with 'open-with'
   java.lang.AutoCloseable
   (close [entity]
     (protocol/-close! entity))
 
   protocol/IAutoCloseable
-  (-close! [{:as entity :keys [eid conn]}]
-
+  (-close! [{:keys [eid queue]}]
     (let [current-timestamp (current-timestamp-seconds clock)]
-      @async-send
-      (a/offer!
-       chan
-       (fn close-and-send-trace []
-         (d/transact! conn [{:db/id eid :end-at current-timestamp}])
-         (when (= 1 eid)
-           (send-trace! entity)))))
-    nil)
+      (a/offer! queue [{:db/id eid :end-at current-timestamp}]))
+    (when (= eid root-eid)
+      (a/close! queue)))
 
   protocol/IEntity
-  (-set-exception! [{:as entity :keys [eid conn]} ex]
-    @async-send
-    (a/offer! chan
-              (fn tx-set-exception! []
-                (d/transact! conn [{:db/id eid :exception ex}])))
+  (-set-exception! [{:as entity :keys [eid queue]} ex]
+    (a/offer! queue [{:db/id eid :exception ex}])
     entity)
 
-  (-set-annotation! [{:as entity :keys [eid conn]} m]
+  (-set-annotation! [{:as entity :keys [eid queue]} m]
     (let [annotations (sanitize-keys m)]
-      @async-send
-      (a/offer! chan
-                (fn tx-set-annotations! []
-                  (d/transact! conn [{:db/id eid :annotations annotations}])))
+      (a/offer! queue [{:db/id eid :annotations annotations}])
       entity))
 
-  (-set-metadata! [{:as entity :keys [eid conn]} m]
+  (-set-metadata! [{:as entity :keys [eid queue]} m]
     (let [metadata (sanitize-keys m)]
-      @async-send
-      (a/offer! chan
-                (fn tx-set-metadata! []
-                  (d/transact! conn [{:db/id eid :metadata metadata}])))
+      (a/offer! queue [{:db/id eid :metadata metadata}])
       entity)))
 
 (extend-protocol protocol/IEntityProvider
   AWSXRayRecorder
   (-start! [^AWSXRayRecorder recorder {:as arg-map
-                                       :keys [clock]
-                                       :or {clock default-clock}}]
+                                       :keys [clock throttle queue]
+                                       :or {clock default-clock
+                                            throttle default-throttle
+                                            queue (a/chan (a/dropping-buffer 1000))}}]
     (let [conn (d/create-conn schema)
           current-timestamp (current-timestamp-seconds clock)
+          eid root-eid
           segment (merge (select-keys arg-map [:name :trace-id :parent-id])
-                         {:db/id 1 :start-at current-timestamp})]
-      @async-send
-      (a/offer!
-       chan
-       (fn tx-start-data []
-         (d/transact! conn [segment])))
-      (->AEntity 1 conn clock recorder)))
+                         {:db/id eid :start-at current-timestamp})
+          ;; async worker
+          done (a/go-loop []
+                 (if-let [tx-data (<! queue)]
+                   (do
+                     (d/transact! conn tx-data)
+                     (recur))
+                   ;; try send the root segment if possible
+                   (try
+                     (dh/with-bulkhead throttle
+                       (send-trace! {:clock clock :conn conn :recorder recorder}))
+                     ;; no-op
+                     (catch Throwable _))))]
+      (a/offer! queue [segment])
+      (->AEntity clock conn done eid queue)))
 
   AEntity
-  (-start! [{:keys [eid conn clock recorder]} {:keys [name]}]
+  (-start! [{:as entity :keys [eid conn]} {:keys [name]}]
     (let [{:keys [tempids]} (d/transact! conn [{:db/id -1  :name  name}
                                                {:db/id eid :subsegments [-1]}])]
-      (->AEntity (get tempids -1) conn clock recorder))))
+      (assoc entity :eid (get tempids -1)))))
 
 (extend-protocol protocol/ITraceHeader
   String
