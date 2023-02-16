@@ -3,6 +3,7 @@
   (:require [aws-xray-sdk-clj.core :as core]
             [aws-xray-sdk-clj.promise :refer [with-open]]
             [aws-xray-sdk-clj.test-util :as util]
+            [clojure.core.async :as a :refer [<!!]]
             [clojure.test :refer [deftest is use-fixtures]]
             [cuid.core :refer [cuid]]
             [promesa.core :as promesa])
@@ -24,34 +25,42 @@
 (def recorder (core/recorder {:emitter mock-emitter}))
 
 (deftest ex-handler-test
-  (let [p (with-open [segment (core/start! recorder {:trace-id (util/trace-id recorder)
+  (let [done (atom nil)
+        p (with-open [segment (core/start! recorder {:trace-id (util/trace-id recorder)
                                                      :clock    mock-clock
                                                      :name     "foo"})]
+            (reset! done (:done segment))
             (promesa/future
               (core/set-annotation! segment {"foo" "bar"})
               (throw (ex-info "Oops" {"foo" "bar"}))))]
     (is (thrown-with-msg? java.util.concurrent.ExecutionException #"Oops" @p))
+    (<!! @done)
     (let [coll @segments]
       (is (= 1 (count coll)))
       (is (= "clojure.lang.ExceptionInfo: Oops {\"foo\" \"bar\"}"
              (get-in @segments [0 :cause :exceptions 0 :message]))))))
 
 (deftest async-segment-test
-  (let [p (with-open [segment (core/start! recorder {:trace-id (util/trace-id recorder)
+  (let [done (atom nil)
+        p (with-open [segment (core/start! recorder {:trace-id (util/trace-id recorder)
                                                      :clock    mock-clock
                                                      :name     "foo"})]
             (core/set-annotation! segment {:foo "bar"})
+            (reset! done (:done segment))
             (promesa/delay 10 "foobar"))]
     (is (= "foobar" @p))
+    (<!! @done)
     (let [coll @segments]
       (is (= "foo" (get-in coll [0 :name])))
       (is (nil? (seq (get-in coll [0 :subsegments]))))
       (is (= {:foo "bar"} (get-in coll [0 :annotations]))))))
 
 (deftest async-subsegment-test
-  (let [p (with-open [segment (core/start! recorder {:trace-id (util/trace-id recorder)
+  (let [done (atom nil)
+        p (with-open [segment (core/start! recorder {:trace-id (util/trace-id recorder)
                                                      :clock    mock-clock
                                                      :name     "bar"})]
+            (reset! done (:done segment))
             (-> (promesa/delay 10 "foobar")
                 (promesa/then (fn [_]
                                 (with-open [subsegment (core/start! segment {:name "baz"})]
@@ -59,6 +68,7 @@
                                   (promesa/delay 10 "baz")))
                               default-executor)))]
     (is (= "baz" @p))
+    (<!! @done)
     (let [coll @segments]
       (is (= "bar" (get-in coll [0 :name])))
       (is (= 1 (count (get-in coll [0 :subsegments]))))
@@ -82,8 +92,11 @@
 ;; Ensure we don't stumble on a deadlock due to synchronized blocks.
 ;; https://github.com/aws/aws-xray-sdk-java/issues/303
 (deftest random-subsegment-test
-  @(with-open [segment (core/start! recorder {:trace-id (util/trace-id recorder)
-                                              :clock    mock-clock
-                                              :name     "baz"})]
-     (promesa/all (random-subsegments segment 50)))
-  (is (<= 1 (count @segments))))
+  (let [done (atom nil)]
+    @(with-open [segment (core/start! recorder {:trace-id (util/trace-id recorder)
+                                                :clock    mock-clock
+                                                :name     "baz"})]
+       (reset! done (:done segment))
+       (promesa/all (random-subsegments segment 50)))
+    (<!! @done)
+    (is (<= 1 (count @segments)))))
