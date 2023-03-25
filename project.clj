@@ -7,7 +7,7 @@
   :dependencies [[org.clojure/clojure "1.11.1"]
                  [camel-snake-kebab "0.4.3"]
                  [com.amazonaws/aws-xray-recorder-sdk-core "2.13.0"]
-                 [datascript "1.4.1"]
+                 [datascript "1.4.2"]
                  [diehard "0.11.6"]
                  [funcool/promesa "9.2.542"]
                  [org.clojure/core.async "1.6.673"]]
