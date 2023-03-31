@@ -175,8 +175,11 @@
       (->AEntity clock conn done eid queue)))
 
   AEntity
-  (-start! [{:as entity :keys [eid conn]} {:keys [name]}]
-    (let [{:keys [tempids]} (d/transact! conn [{:db/id -1  :name  name}
+  (-start! [{:as entity :keys [clock conn eid]} {:keys [name]}]
+    (let [current-timestamp (current-timestamp-seconds clock)
+          {:keys [tempids]} (d/transact! conn [{:db/id -1
+                                                :name name
+                                                :start-at current-timestamp}
                                                {:db/id eid :subsegments [-1]}])]
       (assoc entity :eid (get tempids -1)))))
 

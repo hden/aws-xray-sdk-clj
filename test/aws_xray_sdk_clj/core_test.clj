@@ -124,8 +124,8 @@
   (testing "begin-subsegment!"
     (let [done (atom nil)]
       (core/with-open [root (core/start! recorder {:trace-id (util/trace-id recorder)
-                                                      :clock    mock-clock
-                                                      :name     "root"})]
+                                                   :clock    mock-clock
+                                                   :name     "root"})]
         (reset! done (:done root))
         (core/with-open [a (core/start! root {:name "1"})]
           (core/with-open [b (core/start! a {:name "1-1"})]
@@ -144,28 +144,55 @@
               (core/with-open [j (core/start! i {:name "2-1-1-1"})]
                 (core/set-annotation! j {:foo "bar"}))))))
       (<!! @done)
-      (let [coll @segments]
-        (is (= [{:name "root"
-                 :subsegments
-                 [{:name "1"
-                   :subsegments
-                   [{:name "1-1"}
-                    {:name "1-2"
-                     :subsegments
-                     [{:name "1-2-1"}]}
-                    {:name "1-3"
-                     :subsegments
-                     [{:name "1-3-1"}
-                      {:name "1-3-2"}]}]}
-                  {:name "2"
-                   :subsegments
-                   [{:name "2-1"
-                     :subsegments
-                     [{:name "2-1-1"
+      (let [coll @segments
+            fixed-timestamp (double fixed-timestamp)
+            expected [{:name "root"
+                       :start_time fixed-timestamp
+                       :end_time fixed-timestamp
                        :subsegments
-                       [{:name "2-1-1-1"}]}]}]}]}]
-               (postwalk (fn [x]
-                           (if (map? x)
-                             (select-keys x [:name :subsegments])
-                             x))
-                         coll)))))))
+                       [{:name "1"
+                         :start_time fixed-timestamp
+                         :end_time fixed-timestamp
+                         :subsegments
+                         [{:name "1-1"
+                           :start_time fixed-timestamp
+                           :end_time fixed-timestamp}
+                          {:name "1-2"
+                           :start_time fixed-timestamp
+                           :end_time fixed-timestamp
+                           :subsegments
+                           [{:name "1-2-1"
+                             :start_time fixed-timestamp
+                             :end_time fixed-timestamp}]}
+                          {:name "1-3"
+                           :start_time fixed-timestamp
+                           :end_time fixed-timestamp
+                           :subsegments
+                           [{:name "1-3-1"
+                             :start_time fixed-timestamp
+                             :end_time fixed-timestamp}
+                            {:name "1-3-2"
+                             :start_time fixed-timestamp
+                             :end_time fixed-timestamp}]}]}
+                        {:name "2"
+                         :start_time fixed-timestamp
+                         :end_time fixed-timestamp
+                         :subsegments
+                         [{:name "2-1"
+                           :start_time fixed-timestamp
+                           :end_time fixed-timestamp
+                           :subsegments
+                           [{:name "2-1-1"
+                             :start_time fixed-timestamp
+                             :end_time fixed-timestamp
+                             :subsegments
+                             [{:name "2-1-1-1"
+                               :start_time fixed-timestamp
+                               :end_time fixed-timestamp}]}]}]}]}]
+
+            actual (postwalk (fn [x]
+                               (if (map? x)
+                                 (select-keys x [:name :subsegments :start_time :end_time])
+                                 x))
+                             coll)]
+        (is (= expected actual))))))
