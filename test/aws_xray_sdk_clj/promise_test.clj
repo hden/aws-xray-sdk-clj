@@ -37,7 +37,7 @@
     (<!! @done)
     (let [coll @segments]
       (is (= 1 (count coll)))
-      (is (= "clojure.lang.ExceptionInfo: Oops {\"foo\" \"bar\"}"
+      (is (= "Oops"
              (get-in @segments [0 :cause :exceptions 0 :message]))))))
 
 (deftest async-segment-test
