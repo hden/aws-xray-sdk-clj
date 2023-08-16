@@ -9,7 +9,7 @@
                  [com.amazonaws/aws-xray-recorder-sdk-core "2.14.0"]
                  [datascript "1.5.2"]
                  [diehard "0.11.9"]
-                 [funcool/promesa "11.0.671"]
+                 [funcool/promesa "11.0.674"]
                  [org.clojure/core.async "1.6.681"]]
   :plugins [[lein-cloverage "1.2.4"]]
   :repl-options {:init-ns aws-xray-sdk-clj.core}
