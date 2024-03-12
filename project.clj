@@ -6,7 +6,7 @@
   :java-source-paths ["src/java"]
   :dependencies [[org.clojure/clojure "1.11.2"]
                  [camel-snake-kebab "0.4.3"]
-                 [com.amazonaws/aws-xray-recorder-sdk-core "2.15.1"]
+                 [com.amazonaws/aws-xray-recorder-sdk-core "2.15.2"]
                  [datascript "1.5.4"]
                  [diehard "0.11.12"]
                  [funcool/promesa "11.0.678"]
