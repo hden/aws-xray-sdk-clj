@@ -4,7 +4,7 @@ jobs:
     resource_class: large
     working_directory: ~/workspace
     docker:
-      - image: circleci/clojure:lein
+      - image: cimg/clojure:1.11
     environment:
       LEIN_ROOT: "true"
       JVM_OPTS: -Xmx3200m
