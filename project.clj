@@ -8,7 +8,7 @@
                  [camel-snake-kebab "0.4.3"]
                  [com.amazonaws/aws-xray-recorder-sdk-core "2.18.2"]
                  [datascript "1.5.4"]
-                 [diehard "0.11.12"]
+                 [diehard "0.11.13"]
                  [funcool/promesa "11.0.678"]
                  [org.clojure/core.async "1.8.741"]]
   :plugins [[lein-cloverage "1.2.4"]]
