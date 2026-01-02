@@ -16,4 +16,4 @@
   :global-vars {*warn-on-reflection* true}
   :profiles
   {:dev {:dependencies [[cuid "0.1.2"]
-                        [org.clojure/data.json "2.5.1"]]}})
+                        [org.clojure/data.json "2.5.2"]]}})
