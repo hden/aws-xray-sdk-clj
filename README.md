@@ -1,4 +1,4 @@
-# aws-xray-sdk-clj
+# aws-xray-sdk-clj [![CircleCI](https://circleci.com/gh/hden/aws-xray-sdk-clj/tree/main.svg?style=svg)](https://circleci.com/gh/hden/aws-xray-sdk-clj/tree/main) [![Clojars Project](https://img.shields.io/clojars/v/com.github.hden/aws-xray-sdk-clj.svg)](https://clojars.org/com.github.hden/aws-xray-sdk-clj)
 
 Best-effort trace recording for Clojure. Trace facts are collected in one
 Datascript store per `TraceRecorder` and delivered as immutable completed
@@ -7,6 +7,19 @@ process-wide default recorder.
 
 AWS X-Ray is one optional consumer implementation; it does not participate in
 trace state management.
+
+## Installation
+
+```clojure
+;; Leiningen / Boot
+[com.github.hden/aws-xray-sdk-clj "1.0.0"]
+
+;; Clojure CLI / deps.edn
+com.github.hden/aws-xray-sdk-clj {:mvn/version "1.0.0"}
+```
+
+Version 1.0.0 intentionally breaks the previous API. See the [changelog] for
+the migration summary.
 
 ## Usage
 
@@ -71,3 +84,5 @@ trace work and stop the process-wide default recorder. Call
 Copyright © 2021 Haokang Den
 
 Licensed under the Apache License, Version 2.0.
+
+[changelog]: CHANGELOG.md

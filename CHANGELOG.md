@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog 1.1.0], and this project adheres to
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-08-11
+
 ### Added
 
 - `TraceConsumer`, a protocol for consuming immutable completed traces.
@@ -32,6 +34,7 @@ The format is based on [Keep a Changelog 1.1.0], and this project adheres to
 - Entity `:eid`, `:done`, and send-result APIs. Root traces now start from a
   `TraceConsumer` or `TraceRecorder`.
 
-[unreleased]: https://github.com/hden/aws-xray-sdk-clj/compare/v0.6.0...HEAD
+[unreleased]: https://github.com/hden/aws-xray-sdk-clj/compare/8e79eed...HEAD
+[1.0.0]: https://clojars.org/com.github.hden/aws-xray-sdk-clj/versions/1.0.0
 [Keep a Changelog 1.1.0]: https://keepachangelog.com/en/1.1.0/
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
