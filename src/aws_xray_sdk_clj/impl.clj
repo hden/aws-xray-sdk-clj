@@ -1,197 +1,331 @@
 (ns aws-xray-sdk-clj.impl
-  (:require [aws-xray-sdk-clj.protocols :as protocol]
-            [camel-snake-kebab.core :as csk]
-            [clojure.core.async :as a :refer [<!]]
-            [datascript.core :as d]
-            [diehard.core :as dh]
-            [diehard.bulkhead :refer [bulkhead]])
-  (:import [com.amazonaws.xray AWSXRay AWSXRayRecorder AWSXRayRecorderBuilder]
-           [com.amazonaws.xray.emitters Emitter]
-           [com.amazonaws.xray.entities Entity Subsegment TraceID TraceHeader Segment]
-           [com.amazonaws.xray.plugins Plugin]
-           [com.amazonaws.xray.strategy.sampling SamplingStrategy]
-           [java.time Clock]))
+  (:require
+   [aws-xray-sdk-clj.protocols :as protocol]
+   [cuid.core :refer [cuid]]
+   [datascript.core :as d])
+  (:import
+   (aws_xray_sdk_clj.protocols TraceConsumer)
+   (java.time Clock)
+   (java.util.concurrent ArrayBlockingQueue Executors RejectedExecutionException ThreadFactory ThreadPoolExecutor ThreadPoolExecutor$AbortPolicy TimeUnit)))
 
-(def ^:const root-eid 1)
-(def ^AWSXRayRecorder global-recorder (AWSXRay/getGlobalRecorder))
-(def ^Clock default-clock (Clock/systemUTC))
-(def default-throttle (bulkhead {:concurrency 1}))
-
-(defn- apply-plugins!
-  ^AWSXRayRecorderBuilder
-  [^AWSXRayRecorderBuilder builder plugins]
-  (doseq [^Plugin plugin plugins]
-    (.withPlugin builder plugin))
-  builder)
-
-(defn recorder
-  "Create an AWSXRayRecorder with options.
-  Useful when you don't want to use the global recorder."
-  (^AWSXRayRecorder [] (recorder {}))
-  (^AWSXRayRecorder [{:keys [^Emitter emitter plugins ^SamplingStrategy sampling-strategy]}]
-   (cond-> (AWSXRayRecorderBuilder/standard)
-     emitter           (.withEmitter emitter)
-     (seq plugins)     (apply-plugins! plugins)
-     sampling-strategy (.withSamplingStrategy sampling-strategy)
-     true              (.build))))
-
-(defmacro ^:private when-let*
-  [bindings & body]
-  (if (seq bindings)
-    `(when-let [~(first bindings) ~(second bindings)]
-       (when-let* ~(drop 2 bindings) ~@body))
-    `(do ~@body)))
+(def ^:private default-limits
+  {:fact-mailbox-capacity    1024
+   :completed-trace-capacity 64
+   :consumer-thread-count    2
+   :max-stored-roots         1024
+   :max-entities-per-trace   1024
+   :max-stored-entities      16384
+   :root-ttl-seconds         300
+   :clock                    (Clock/systemUTC)})
 
 (def ^:private schema
-  {:subsegments {:db/cardinality :db.cardinality/many
-                 :db/valueType   :db.type/ref}})
+  {:entity-key {:db/unique :db.unique/identity}
+   :children   {:db/cardinality :db.cardinality/many
+                :db/valueType   :db.type/ref}})
 
-(defn ^:private sanitize-keys [m]
-  (into {}
-        (map (fn [[k v]]
-               [(csk/->snake_case_string k) v]))
-        m))
+(defn- daemon-thread-factory [prefix]
+  (let [counter (atom 0)]
+    (reify ThreadFactory
+      (newThread [_ runnable]
+        (doto (Thread. runnable (str prefix (swap! counter inc)))
+          (.setDaemon true))))))
 
-(defn ^:private current-timestamp-seconds
-  [^Clock clock]
-  (double (/ (.millis (or clock default-clock))
-             1000)))
+(defrecord TraceRuntime [conn fact-mailbox fact-executor consumer-executor stopping? limits])
 
-(defn ^:private add-attributes!
-  ^Entity
-  [^Entity entity {:keys [^Clock clock db eid]}]
-  (let [{:keys [start-at end-at annotations exception metadata]}
-        (d/pull db '[*] eid)]
-    (when start-at
-      (.setStartTime entity start-at))
-    (when (map? annotations)
-      (doseq [[^String key v] annotations]
-        (cond
-          (boolean? v) (.putAnnotation entity key ^Boolean v)
-          (number? v)  (.putAnnotation entity key ^Number v)
-          :else        (.putAnnotation entity key (str v)))))
-    (when (map? metadata)
-      (doseq [[^String key v] metadata]
-        (.putMetadata entity key (str v))))
-    (when exception
-      (.addException entity exception)
-      (.setError entity true))
-    (let [end-at (or end-at (current-timestamp-seconds clock))]
-      (.setEndTime entity end-at))
-    entity))
+(defrecord TraceRecorder [runtime consumer])
 
-(defn ^:private create-segment!
-  ^Segment
-  [^AWSXRayRecorder recorder {:as arg-map :keys [db]}]
-  (let [eid root-eid
-        {:keys [name trace-id parent-id]}
-        (d/pull db [:name :trace-id :parent-id] eid)
-        segment (if trace-id
-                  (.beginSegment recorder name (TraceID/fromString trace-id) parent-id)
-                  (.beginSegment recorder name))]
-    (add-attributes! segment (assoc arg-map :eid eid))
-    segment))
+(defn- current-timestamp-seconds [^Clock clock]
+  (double (/ (.millis (or clock (Clock/systemUTC))) 1000)))
 
-(defn ^:private create-subsegment!
-  ^Subsegment
-  [^AWSXRayRecorder recorder {:as arg-map :keys [db eid]}]
-  (let [{:keys [name]} (d/pull db [:name] eid)
-        subsegment (.beginSubsegment recorder name)]
-    (add-attributes! subsegment arg-map)
-    subsegment))
+(defn- entity [db entity-key]
+  (d/entity db [:entity-key entity-key]))
 
-(defn ^:private send-trace! [{:as arg-map
-                              :keys [^Clock clock conn eid ^AWSXRayRecorder recorder]
-                              :or {eid root-eid}}]
-  (let [db @conn
-        tree (d/pull db
-                     '[[:db/id :as :eid]
-                       {:subsegments 1}]
-                     eid)]
-    (if (= eid root-eid)
-      (create-segment! recorder {:clock clock :db db})
-      (create-subsegment! recorder {:clock clock :db db :eid eid}))
-    (when-let [subsegments (seq (:subsegments tree))]
-      (doseq [{:keys [eid]} subsegments]
-        (when-not (= eid root-eid)
-          (send-trace! (assoc arg-map :eid eid)))))
-    (if (= eid root-eid)
-      (.endSegment recorder)
-      (.endSubsegment recorder))))
+(defn- root-eids [db]
+  (d/q '[:find [?eid ...]
+         :where
+         [?eid :entity-key ?key]
+         [?eid :trace-key ?key]]
+       db))
 
-(defrecord AEntity [^Clock clock conn done eid queue]
-  ;; Implement AutoCloseable by default so that this can work with 'open-with'
+(defn- entity-count [db]
+  (count (d/q '[:find [?eid ...]
+                :where [?eid :entity-key]]
+           db)))
+
+(defn- trace-entity-count [db trace-key]
+  (count (d/q '[:find [?eid ...]
+                :in $ ?trace-key
+                :where [?eid :trace-key ?trace-key]]
+           db
+           trace-key)))
+
+(defn- entity-eids [db eid]
+  (let [children (:children (d/pull db [:children] eid))]
+    (cons eid (mapcat #(entity-eids db (:db/id %)) children))))
+
+(defn- snapshot-entity [db eid]
+  (let [{:keys [name trace-id parent-id start-at end-at annotations metadata
+                exception children]}
+        (d/pull db [:name :trace-id :parent-id :start-at :end-at
+                    :annotations :metadata :exception :children]
+                eid)
+        trace (cond-> {:name     name
+                       :start-at start-at
+                       :end-at   end-at}
+                trace-id (assoc :trace-id trace-id)
+                parent-id (assoc :parent-id parent-id)
+                annotations (assoc :annotations annotations)
+                metadata (assoc :metadata metadata)
+                exception (assoc :exception exception))]
+    (cond-> trace
+      (seq children) (assoc :subsegments (mapv #(snapshot-entity db (:db/id %)) children)))))
+
+(defn- submit-completed-trace! [runtime consumer trace]
+  (try
+    (.execute ^ThreadPoolExecutor
+              (:consumer-executor runtime)
+              ^Runnable
+              (reify Runnable
+                (run [_]
+                  (try
+                    (protocol/consume! consumer trace)
+                    (catch Throwable _)))))
+    true
+    (catch RejectedExecutionException _
+      false)))
+
+(defn- remove-trace! [runtime db root-eid]
+  (let [root (d/pull db [:consumer] root-eid)
+        trace (snapshot-entity db root-eid)
+        retractions (mapv (fn [eid] [:db/retractEntity eid])
+                          (entity-eids db root-eid))]
+    (d/transact! (:conn runtime) retractions)
+    (submit-completed-trace! runtime (:consumer root) trace)))
+
+(defn- expire-traces! [runtime]
+  (let [{:keys [clock root-ttl-seconds]} (:limits runtime)
+        expires-before (- (current-timestamp-seconds clock) root-ttl-seconds)
+        db @(:conn runtime)]
+    (doseq [root-eid (root-eids db)
+            :let [root (d/pull db [:start-at] root-eid)]
+            :when (<= (:start-at root) expires-before)]
+      (remove-trace! runtime @(:conn runtime) root-eid))))
+
+(defn- apply-fact! [runtime fact]
+  (let [db @(:conn runtime)
+        {:keys [kind trace-key entity-key parent-key]} fact]
+    (case kind
+      :root-started
+      (when-not (entity db entity-key)
+        (when (and (< (count (root-eids db))
+                     (:max-stored-roots (:limits runtime)))
+                   (< (entity-count db)
+                     (:max-stored-entities (:limits runtime))))
+          (let [root-fact (select-keys fact [:trace-key :entity-key :name
+                                             :trace-id :parent-id :consumer
+                                             :start-at])
+                root-attributes (into {} (remove (comp nil? val)) root-fact)]
+            (d/transact! (:conn runtime)
+                         [(assoc root-attributes :db/id -1)]))))
+
+      :child-started
+      (when-let [parent (entity db parent-key)]
+        (when (and (= trace-key (:trace-key parent))
+                   (nil? (:end-at parent))
+                   (not (entity db entity-key))
+                   (entity db trace-key)
+                   (< (trace-entity-count db trace-key)
+                      (:max-entities-per-trace (:limits runtime)))
+                   (< (entity-count db)
+                      (:max-stored-entities (:limits runtime))))
+          (d/transact! (:conn runtime)
+                       [{:db/id       -1
+                         :trace-key   trace-key
+                         :entity-key  entity-key
+                         :parent-key  parent-key
+                         :name        (:name fact)
+                         :start-at    (:start-at fact)}
+                        {:db/id (:db/id parent)
+                         :children [-1]}])))
+
+      :annotation-set
+      (when-let [current (entity db entity-key)]
+        (when (and (= trace-key (:trace-key current))
+                   (nil? (:end-at current)))
+          (d/transact! (:conn runtime)
+                       [{:db/id (:db/id current)
+                         :annotations (:annotations fact)}])))
+
+      :metadata-set
+      (when-let [current (entity db entity-key)]
+        (when (and (= trace-key (:trace-key current))
+                   (nil? (:end-at current)))
+          (d/transact! (:conn runtime)
+                       [{:db/id (:db/id current)
+                         :metadata (:metadata fact)}])))
+
+      :exception-set
+      (when-let [current (entity db entity-key)]
+        (when (and (= trace-key (:trace-key current))
+                   (nil? (:end-at current)))
+          (d/transact! (:conn runtime)
+                       [{:db/id (:db/id current)
+                         :exception (:exception fact)}])))
+
+      :entity-closed
+      (when-let [current (entity db entity-key)]
+        (when (= trace-key (:trace-key current))
+          (if (= trace-key entity-key)
+            (do
+              (d/transact! (:conn runtime)
+                           [{:db/id  (:db/id current)
+                             :end-at (:end-at fact)}])
+              (remove-trace! runtime @(:conn runtime) (:db/id current)))
+            (d/transact! (:conn runtime)
+                         [{:db/id  (:db/id current)
+                           :end-at (:end-at fact)}])))))))
+
+(defn- new-runtime [options]
+  (let [limits (merge default-limits options)
+        conn (d/create-conn schema)
+        fact-mailbox (ArrayBlockingQueue. (:fact-mailbox-capacity limits))
+        fact-executor (Executors/newSingleThreadExecutor
+                        (daemon-thread-factory "aws-xray-facts-"))
+        consumer-executor (ThreadPoolExecutor.
+                            (:consumer-thread-count limits)
+                            (:consumer-thread-count limits)
+                            0
+                            TimeUnit/MILLISECONDS
+                            (ArrayBlockingQueue. (:completed-trace-capacity limits))
+                            (daemon-thread-factory "aws-xray-consumer-")
+                            (ThreadPoolExecutor$AbortPolicy.))
+        runtime (->TraceRuntime conn fact-mailbox fact-executor consumer-executor (atom false) limits)]
+    (.submit fact-executor
+             ^Runnable
+             (reify Runnable
+               (run [_]
+                 (while (not @(:stopping? runtime))
+                   (when-let [fact (.poll fact-mailbox 100 TimeUnit/MILLISECONDS)]
+                     (try
+                       (apply-fact! runtime fact)
+                       (catch Throwable _)))
+                   (try
+                     (expire-traces! runtime)
+                     (catch Throwable _))))))
+    runtime))
+
+(defonce ^:private runtime* (atom nil))
+
+(defn- runtime []
+  (or @runtime*
+      (locking runtime*
+        (or @runtime*
+            (reset! runtime* (new-runtime {}))))))
+
+(defn- shutdown-runtime! [runtime]
+  (when (compare-and-set! (:stopping? runtime) false true)
+    (.clear ^ArrayBlockingQueue (:fact-mailbox runtime))
+    (.shutdownNow ^java.util.concurrent.ExecutorService (:fact-executor runtime))
+    (.shutdownNow ^java.util.concurrent.ExecutorService (:consumer-executor runtime))
+    (let [db @(:conn runtime)
+          retractions (mapv (fn [eid] [:db/retractEntity eid])
+                            (d/q '[:find [?eid ...]
+                                   :where [?eid :entity-key]]
+                                 db))]
+      (when (seq retractions)
+        (d/transact! (:conn runtime) retractions))))
+  nil)
+
+(defn shutdown!
+  ([]
+   (when-let [current @runtime*]
+     (shutdown-runtime! current)
+     (compare-and-set! runtime* current nil))
+   nil)
+  ([recorder]
+   (shutdown-runtime! (:runtime recorder))))
+
+(defn trace-recorder
+  ([consumer]
+   (trace-recorder consumer {}))
+  ([consumer options]
+   (->TraceRecorder (new-runtime options) consumer)))
+
+(defn- record! [runtime fact]
+  (when-not @(:stopping? runtime)
+    (.offer ^ArrayBlockingQueue (:fact-mailbox runtime) fact)))
+
+(defrecord Entity [runtime trace-key entity-key parent-key clock]
   java.lang.AutoCloseable
   (close [entity]
     (protocol/-close! entity))
 
   protocol/IAutoCloseable
-  (-close! [{:keys [eid queue]}]
-    (let [current-timestamp (current-timestamp-seconds clock)]
-      (a/offer! queue [{:db/id eid :end-at current-timestamp}]))
-    (when (= eid root-eid)
-      (a/close! queue)))
-
-  protocol/IEntity
-  (-set-exception! [{:as entity :keys [eid queue]} ex]
-    (a/offer! queue [{:db/id eid :exception ex}])
+  (-close! [entity]
+    (record! runtime {:kind       :entity-closed
+                      :trace-key  trace-key
+                      :entity-key entity-key
+                      :end-at     (current-timestamp-seconds clock)})
     entity)
 
-  (-set-annotation! [{:as entity :keys [eid queue]} m]
-    (let [annotations (sanitize-keys m)]
-      (a/offer! queue [{:db/id eid :annotations annotations}])
-      entity))
+  protocol/IEntity
+  (-set-exception! [entity ex]
+    (record! runtime {:kind       :exception-set
+                      :trace-key  trace-key
+                      :entity-key entity-key
+                      :exception  ex})
+    entity)
 
-  (-set-metadata! [{:as entity :keys [eid queue]} m]
-    (let [metadata (sanitize-keys m)]
-      (a/offer! queue [{:db/id eid :metadata metadata}])
-      entity)))
+  (-set-annotation! [entity annotations]
+    (record! runtime {:kind        :annotation-set
+                      :trace-key   trace-key
+                      :entity-key  entity-key
+                      :annotations annotations})
+    entity)
+
+  (-set-metadata! [entity metadata]
+    (record! runtime {:kind       :metadata-set
+                      :trace-key  trace-key
+                      :entity-key entity-key
+                      :metadata   metadata})
+    entity))
 
 (extend-protocol protocol/IEntityProvider
-  AWSXRayRecorder
-  (-start! [^AWSXRayRecorder recorder {:as arg-map
-                                       :keys [clock throttle queue]
-                                       :or {clock default-clock
-                                            throttle default-throttle
-                                            queue (a/chan (a/dropping-buffer 1000))}}]
-    (let [conn (d/create-conn schema)
-          current-timestamp (current-timestamp-seconds clock)
-          eid root-eid
-          segment (merge (select-keys arg-map [:name :trace-id :parent-id])
-                         {:db/id eid :start-at current-timestamp})
-          ;; async worker
-          done (a/go-loop []
-                 (if-let [tx-data (<! queue)]
-                   (do
-                     (d/transact! conn tx-data)
-                     (recur))
-                   ;; try send the root segment if possible
-                   (try
-                     (dh/with-bulkhead throttle
-                       (send-trace! {:clock clock :conn conn :recorder recorder}))
-                     ;; no-op
-                     (catch Throwable _))))]
-      (a/offer! queue [segment])
-      (->AEntity clock conn done eid queue)))
+  TraceConsumer
+  (-start! [consumer {:keys [name trace-id parent-id clock]}]
+    (let [trace-key (cuid)
+          current-runtime (runtime)]
+      (record! current-runtime {:kind       :root-started
+                                :trace-key  trace-key
+                                :entity-key trace-key
+                                :name       name
+                                :trace-id   trace-id
+                                :parent-id  parent-id
+                                :consumer   consumer
+                                :start-at   (current-timestamp-seconds clock)})
+      (->Entity current-runtime trace-key trace-key nil clock)))
 
-  AEntity
-  (-start! [{:as entity :keys [clock conn eid]} {:keys [name]}]
-    (let [current-timestamp (current-timestamp-seconds clock)
-          {:keys [tempids]} (d/transact! conn [{:db/id -1
-                                                :name name
-                                                :start-at current-timestamp}
-                                               {:db/id eid :subsegments [-1]}])]
-      (assoc entity :eid (get tempids -1)))))
+  TraceRecorder
+  (-start! [{:keys [runtime consumer]} {:keys [name trace-id parent-id]}]
+    (let [trace-key (cuid)
+          clock (:clock (:limits runtime))]
+      (record! runtime {:kind       :root-started
+                        :trace-key  trace-key
+                        :entity-key trace-key
+                        :name       name
+                        :trace-id   trace-id
+                        :parent-id  parent-id
+                        :consumer   consumer
+                        :start-at   (current-timestamp-seconds clock)})
+      (->Entity runtime trace-key trace-key nil clock)))
 
-(extend-protocol protocol/ITraceHeader
-  String
-  (-root-trace-id [^String s]
-    (when-let* [header s
-                xray-trace-header (TraceHeader/fromString header)
-                root-trace-id (.getRootTraceId xray-trace-header)]
-      (.toString root-trace-id)))
-
-  (-parent-id [^String s]
-    (when-let* [header s
-                xray-trace-header (TraceHeader/fromString header)]
-      (.getParentId xray-trace-header))))
+  Entity
+  (-start! [{:keys [runtime trace-key entity-key clock]} {:keys [name]}]
+    (let [child-key (cuid)]
+      (record! runtime {:kind       :child-started
+                        :trace-key  trace-key
+                        :entity-key child-key
+                        :parent-key entity-key
+                        :name       name
+                        :start-at   (current-timestamp-seconds clock)})
+      (->Entity runtime trace-key child-key entity-key clock))))

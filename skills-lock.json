@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "nits": {
+      "source": "hden/skills",
+      "sourceType": "github",
+      "skillPath": "skills/nits/SKILL.md",
+      "computedHash": "06065a5f97aef8f33d47b3f1a0d7adde5657e04e23773cedfe3256b0613ae2ee"
+    },
+    "standard-clj": {
+      "source": "hden/skills",
+      "sourceType": "github",
+      "skillPath": "skills/standard-clj/SKILL.md",
+      "computedHash": "c247bf027b3c45011879adcb82dd0b6638aa76e42ea2cab3cb3f6bff596b3586"
+    }
+  }
+}

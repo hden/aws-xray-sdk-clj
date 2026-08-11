@@ -14,6 +14,10 @@
   (-set-annotation! [_ arg-map])
   (-set-metadata! [_ arg-map]))
 
+(defprotocol TraceConsumer
+  "Accepts one immutable completed trace."
+  (consume! [_ trace]))
+
 (defprotocol ITraceHeader
   (-root-trace-id [_])
   (-parent-id [_]))
