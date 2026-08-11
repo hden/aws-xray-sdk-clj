@@ -176,7 +176,11 @@
       (when-let [current (entity db entity-key)]
         (when (= trace-key (:trace-key current))
           (if (= trace-key entity-key)
-            (remove-trace! runtime db (:db/id current))
+            (do
+              (d/transact! (:conn runtime)
+                           [{:db/id  (:db/id current)
+                             :end-at (:end-at fact)}])
+              (remove-trace! runtime @(:conn runtime) (:db/id current)))
             (d/transact! (:conn runtime)
                          [{:db/id  (:db/id current)
                            :end-at (:end-at fact)}])))))))

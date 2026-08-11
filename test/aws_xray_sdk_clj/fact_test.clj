@@ -28,6 +28,19 @@
            (select-keys (deref received 1000 ::timeout)
                         [:name :annotations])))))
 
+(deftest root-close-records-its-end-time-before-delivery
+  (let [millis (atom 0)
+        received (promise)
+        consumer (reify protocol/TraceConsumer
+                   (consume! [_ trace]
+                     (deliver received trace)))
+        recorder (core/trace-recorder consumer {:clock (advancing-clock millis)})
+        root (core/start! recorder {:name "root"})]
+    (reset! millis 1500)
+    (core/close! root)
+    (is (= 1.5 (:end-at (deref received 1000 ::timeout))))
+    (core/shutdown! recorder)))
+
 (deftest root-close-gives-its-child-to-the-same-consumer
   (let [received (promise)
         consumer (reify protocol/TraceConsumer
