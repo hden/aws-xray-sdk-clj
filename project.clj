@@ -17,4 +17,4 @@
   :global-vars {*warn-on-reflection* true}
   :profiles
   {:dev {:dependencies [[org.clojure/data.json "2.5.2"]
-                        [org.clojure/test.check "1.1.1"]]}})
+                        [org.clojure/test.check "1.1.3"]]}})
