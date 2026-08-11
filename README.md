@@ -13,11 +13,9 @@ trace state management.
 ```clojure
 (require '[aws-xray-sdk-clj.core :as core]
          '[aws-xray-sdk-clj.xray :as xray])
-(import 'com.amazonaws.xray.emitters.UDPEmitter)
 
-;; AWSXRayRecorder, extended as a TraceConsumer by aws-xray-sdk-clj.xray.
-(def consumer
-  (xray/xray-trace-consumer {:emitter (UDPEmitter.)}))
+;; Creates and configures an AWSXRayRecorder as a TraceConsumer.
+(def consumer (xray/xray-trace-consumer))
 
 (core/with-open [trace (core/start! consumer {:name "checkout"})]
   (core/set-annotation! trace {:request-id "abc"})
@@ -25,10 +23,10 @@ trace state management.
     (core/set-metadata! database {:table "orders"})))
 ```
 
-This uses the AWS X-Ray SDK's `UDPEmitter`; run an X-Ray daemon or collector
-reachable at its configured daemon address (by default `127.0.0.1:2000`).
-`xray-trace-consumer` also accepts AWS SDK `:plugins` and
-`:sampling-strategy` options.
+`xray-trace-consumer` wraps `AWSXRayRecorderBuilder/standard` and accepts the
+AWS SDK's `:emitter`, `:plugins`, and `:sampling-strategy` options. The SDK's
+default emitter requires an X-Ray daemon or collector at its configured daemon
+address (by default `127.0.0.1:2000`).
 
 `close!` never waits for storage or delivery. A full trace mailbox, a full
 consumer queue, or a consumer failure drops trace data without changing
