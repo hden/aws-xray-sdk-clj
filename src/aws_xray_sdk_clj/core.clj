@@ -1,28 +1,8 @@
 (ns aws-xray-sdk-clj.core
   (:refer-clojure :exclude [with-open])
-  (:require [aws-xray-sdk-clj.protocols :as protocol]
-            [aws-xray-sdk-clj.impl :as impl])
-  (:import [com.amazonaws.xray AWSXRayRecorder]))
-
-(def ^AWSXRayRecorder global-recorder impl/global-recorder)
-
-(defn recorder
-  [arg-map]
-  (impl/recorder arg-map))
-
-(defn root-trace-id
-  "Get the root trace ID from a HTTP Header string."
-  ^String
-  [^String s]
-  (when s
-    (protocol/-root-trace-id s)))
-
-(defn parent-id
-  "Get the parent ID from a HTTP Header string."
-  ^String
-  [^String s]
-  (when s
-    (protocol/-parent-id s)))
+  (:require
+   [aws-xray-sdk-clj.impl :as impl]
+   [aws-xray-sdk-clj.protocols :as protocol]))
 
 (defn set-annotation! [entity arg-map]
   (when entity
@@ -39,8 +19,20 @@
 (defn start! [entity-provider arg-map]
   (protocol/-start! entity-provider arg-map))
 
+(defn trace-recorder
+  ([consumer]
+   (impl/trace-recorder consumer))
+  ([consumer options]
+   (impl/trace-recorder consumer options)))
+
 (defn close! [entity]
   (protocol/-close! entity))
+
+(defn shutdown!
+  ([]
+   (impl/shutdown!))
+  ([recorder]
+   (impl/shutdown! recorder)))
 
 (defmacro with-open
   "Evaluates body in the scope of a generated entity.

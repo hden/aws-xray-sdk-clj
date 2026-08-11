@@ -1,77 +1,67 @@
-# aws-xray-sdk-clj [![CircleCI](https://circleci.com/gh/hden/aws-xray-sdk-clj/tree/main.svg?style=svg)](https://circleci.com/gh/hden/aws-xray-sdk-clj/tree/main)
- [![codecov](https://codecov.io/gh/hden/aws-xray-sdk-clj/branch/main/graph/badge.svg?token=YHH1W6IGIW)](https://codecov.io/gh/hden/aws-xray-sdk-clj) [![Clojars Project](https://img.shields.io/clojars/v/com.github.hden/aws-xray-sdk-clj.svg)](https://clojars.org/com.github.hden/aws-xray-sdk-clj)
+# aws-xray-sdk-clj
 
-A light wrapper for aws-xray-sdk-java.
+Best-effort trace recording for Clojure. Trace facts are collected in one
+Datascript store per `TraceRecorder` and delivered as immutable completed
+traces to a `TraceConsumer`. Passing a consumer directly to `start!` uses the
+process-wide default recorder.
 
-## Why
-
-> High mutability and circular refrences between segments and subsegments create a prime landscape for thread issues. -- https://github.com/aws/aws-xray-sdk-java/pull/306#issue-1011630726
-
-This library tries to mitigate the problems by...
-
-1. Replacing mutability and locks with a clojure atom
-2. Replacing circular refrences (between Java objects) with a in-memory DB ([datascript](https://github.com/tonsky/datascript))
-3. Recursively walk the tree and send the entities (a root segment and its subsegments) to Xray.
+AWS X-Ray is one optional consumer implementation; it does not participate in
+trace state management.
 
 ## Usage
 
-For synchronous execution
+```clojure
+(require '[aws-xray-sdk-clj.core :as core]
+         '[aws-xray-sdk-clj.xray :as xray])
 
-```clj
-(require '[aws-xray-sdk-clj.core :as core])
+(def consumer (xray/xray-trace-consumer {:emitter udp-emitter}))
 
-(def trace-id (core/root-trace-id http-header-string))
-
-(core/with-open [segment (core/start! core/global-recorder {:trace-id trace-id
-                                                            :name     "foo"})]
-  (core/set-annotation! segment {:foo "bar"})
-  (core/with-open [subsegment (core/start! segment {:name "baz"})]
-    (core/set-annotation! subsegment {:bar "baz"})))
+(core/with-open [trace (core/start! consumer {:name "checkout"})]
+  (core/set-annotation! trace {:request-id "abc"})
+  (core/with-open [database (core/start! trace {:name "database"})]
+    (core/set-metadata! database {:table "orders"})))
 ```
 
-For asynchronous codes
+`close!` never waits for storage or delivery. A full trace mailbox, a full
+consumer queue, or a consumer failure drops trace data without changing
+application control flow.
 
-```clj
-(require '[promesa.core :as promesa])
-(require '[aws-xray-sdk-clj.promise :refer [with-open]])
+`TraceConsumer` directly uses the process-wide default recorder. To isolate a
+test or configure finite trace-owned resources, create and explicitly shut down
+an independent recorder:
 
-;; A light wrapper around promesa/finally
-@(with-open [segment (core/start! recorder {:trace-id trace-id
-                                               :name     "bar"})]
-   (promesa/delay 10 "foobar"))
+```clojure
+(def tracing
+  (core/trace-recorder consumer
+                       {:max-stored-roots 32
+                        :max-entities-per-trace 64
+                        :root-ttl-seconds 30}))
+
+(core/start! tracing {:name "checkout"})
+(core/shutdown! tracing)
 ```
 
-## Note
+## Testing
 
-When unit testing on a machine that doesn't have a XRay agent running,
-you might want to override the default UDP emitter to prevent errors.
+`CapturedTraceConsumer` receives immutable traces without creating AWS SDK
+objects.
 
-```clj
-(:import [com.amazonaws.xray.emitters Emitter])
+```clojure
+(require '[aws-xray-sdk-clj.xray :as xray]
+         '[aws-xray-sdk-clj.protocols :as protocol])
 
-(def mock-emitter
-  (proxy [Emitter][]
-    (sendSegment [x]
-      true)
+(def consumer (xray/captured-trace-consumer))
 
-    (sendSubsegment [x]
-      true)))
-
-(def recorder (core/recorder {:emitter mock-emitter}))
+;; Use consumer as the root argument to core/start!, then inspect:
+@(:traces consumer)
 ```
+
+Call `core/shutdown!` during controlled process shutdown to discard pending
+trace work and stop the process-wide default recorder. Call
+`(core/shutdown! tracing)` for each independent recorder.
 
 ## License
 
 Copyright © 2021 Haokang Den
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+Licensed under the Apache License, Version 2.0.
