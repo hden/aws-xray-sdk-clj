@@ -11,7 +11,7 @@
                  [datascript "1.5.4"]
                  [diehard "0.12.1"]
                  [funcool/promesa "12.0.1"]
-                 [org.clojure/core.async "1.8.741"]]
+                 [org.clojure/core.async "1.9.865"]]
   :plugins [[lein-cloverage "1.2.4"]]
   :repl-options {:init-ns aws-xray-sdk-clj.core}
   :global-vars {*warn-on-reflection* true}
